@@ -11,7 +11,11 @@ requires-python = ">=3.11"
 authors = [
   { name = "OpenAI Codex" }
 ]
-dependencies = []
+dependencies = [
+  "mcp>=1.19,<2",
+  "Pillow>=10,<12",
+  "PyYAML>=6,<7"
+]
 
 [project.scripts]
 ds = "deepscientist.cli:main"

@@ -12,6 +12,28 @@ The Core owns only two built-in MCP namespaces:
 There is no separate public `git` MCP.
 Git operations are internal to `artifact`.
 
+## 1.1 Current implementation paths
+
+The current codebase implements this contract primarily in:
+
+- `src/deepscientist/mcp/context.py`
+- `src/deepscientist/mcp/server.py`
+- `src/deepscientist/memory/service.py`
+- `src/deepscientist/artifact/service.py`
+- `src/deepscientist/runners/codex.py`
+
+The Codex runner injects exactly two built-in quest-local MCP servers:
+
+- `memory`
+- `artifact`
+
+Both resolve quest context automatically through injected environment variables such as:
+
+- `DS_HOME`
+- `DS_QUEST_ID`
+- `DS_QUEST_ROOT`
+- `DS_RUN_ID`
+
 ## 2. Two Durable Scopes
 
 The system needs both **global** and **quest-local** durable information.

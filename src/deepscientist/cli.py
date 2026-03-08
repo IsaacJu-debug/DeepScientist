@@ -1,0 +1,395 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import webbrowser
+from pathlib import Path
+
+from .artifact import ArtifactService
+from .config import ConfigManager
+from .daemon import DaemonApp
+from .home import default_home, ensure_home_layout, repo_root
+from .memory import MemoryService
+from .prompts import PromptBuilder
+from .quest import QuestService
+from .registries import BaselineRegistry
+from .runners import CodexRunner, RunRequest
+from .runtime_logs import JsonlLogger
+from .shared import ensure_dir, read_yaml
+from .skills import SkillInstaller
+from .tui import render_tui
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="ds", description="DeepScientist Core skeleton")
+    parser.add_argument("--home", default=None, help="Override DeepScientist home")
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser("init")
+
+    new_parser = subparsers.add_parser("new")
+    new_parser.add_argument("goal")
+    new_parser.add_argument("--quest-id", default=None)
+
+    subparsers.add_parser("status").add_argument("quest_id", nargs="?")
+
+    pause_parser = subparsers.add_parser("pause")
+    pause_parser.add_argument("quest_id")
+
+    resume_parser = subparsers.add_parser("resume")
+    resume_parser.add_argument("quest_id")
+
+    daemon_parser = subparsers.add_parser("daemon")
+    daemon_parser.add_argument("--host", default=None)
+    daemon_parser.add_argument("--port", type=int, default=None)
+
+    run_parser = subparsers.add_parser("run")
+    run_parser.add_argument("skill_id")
+    run_parser.add_argument("--quest-id", required=True)
+    run_parser.add_argument("--message", required=True)
+    run_parser.add_argument("--model", default=None)
+
+    ui_parser = subparsers.add_parser("ui")
+    ui_parser.add_argument("--mode", choices=("web", "tui", "both"), default="web")
+
+    note_parser = subparsers.add_parser("note")
+    note_parser.add_argument("quest_id")
+    note_parser.add_argument("text")
+
+    approve_parser = subparsers.add_parser("approve")
+    approve_parser.add_argument("quest_id")
+    approve_parser.add_argument("decision_id")
+    approve_parser.add_argument("--reason", default="Approved by user.")
+
+    graph_parser = subparsers.add_parser("graph")
+    graph_parser.add_argument("quest_id")
+
+    metrics_parser = subparsers.add_parser("metrics")
+    metrics_parser.add_argument("target")
+
+    push_parser = subparsers.add_parser("push")
+    push_parser.add_argument("quest_id")
+
+    memory_parser = subparsers.add_parser("memory")
+    memory_subparsers = memory_parser.add_subparsers(dest="memory_command", required=True)
+    memory_search = memory_subparsers.add_parser("search")
+    memory_search.add_argument("query")
+
+    baseline_parser = subparsers.add_parser("baseline")
+    baseline_subparsers = baseline_parser.add_subparsers(dest="baseline_command", required=True)
+    baseline_subparsers.add_parser("list")
+    baseline_attach = baseline_subparsers.add_parser("attach")
+    baseline_attach.add_argument("--quest-id", required=True)
+    baseline_attach.add_argument("--baseline-id", required=True)
+    baseline_attach.add_argument("--variant-id", default=None)
+
+    config_parser = subparsers.add_parser("config")
+    config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
+    config_show = config_subparsers.add_parser("show")
+    config_show.add_argument("name", choices=("config", "runners", "connectors", "plugins", "mcp_servers"))
+    config_edit = config_subparsers.add_parser("edit")
+    config_edit.add_argument("name", choices=("config", "runners", "connectors", "plugins", "mcp_servers"))
+    config_subparsers.add_parser("validate")
+
+    return parser
+
+
+def resolve_home(args: argparse.Namespace) -> Path:
+    return Path(args.home).expanduser() if args.home else default_home()
+
+
+def init_command(home: Path) -> int:
+    ensure_home_layout(home)
+    config_manager = ConfigManager(home)
+    created = config_manager.ensure_files()
+    git_info = config_manager.git_readiness()
+    installer = SkillInstaller(repo_root(), home)
+    synced = installer.sync_global()
+    print(json.dumps(
+        {
+            "home": str(home),
+            "created_config_files": [str(path) for path in created],
+            "git": git_info,
+            "skills": synced,
+        },
+        ensure_ascii=False,
+        indent=2,
+    ))
+    return 0 if git_info["installed"] else 1
+
+
+def new_command(home: Path, goal: str, quest_id: str | None) -> int:
+    ensure_home_layout(home)
+    config_manager = ConfigManager(home)
+    config_manager.ensure_files()
+    installer = SkillInstaller(repo_root(), home)
+    quest_service = QuestService(home, skill_installer=installer)
+    snapshot = quest_service.create(goal=goal, quest_id=quest_id)
+    print(json.dumps(snapshot, ensure_ascii=False, indent=2))
+    return 0
+
+
+def status_command(home: Path, quest_id: str | None) -> int:
+    quest_service = QuestService(home)
+    if quest_id:
+        print(json.dumps(quest_service.snapshot(quest_id), ensure_ascii=False, indent=2))
+    else:
+        print(json.dumps(quest_service.list_quests(), ensure_ascii=False, indent=2))
+    return 0
+
+
+def pause_command(home: Path, quest_id: str) -> int:
+    snapshot = QuestService(home).set_status(quest_id, "paused")
+    print(json.dumps(snapshot, ensure_ascii=False, indent=2))
+    return 0
+
+
+def resume_command(home: Path, quest_id: str) -> int:
+    snapshot = QuestService(home).set_status(quest_id, "active")
+    print(json.dumps(snapshot, ensure_ascii=False, indent=2))
+    return 0
+
+
+def daemon_command(home: Path, host: str | None, port: int | None) -> int:
+    ensure_home_layout(home)
+    config_manager = ConfigManager(home)
+    config_manager.ensure_files()
+    config = config_manager.load_named("config")
+    ui_config = config.get("ui", {})
+    daemon = DaemonApp(home)
+    daemon.serve(host or ui_config.get("host", "127.0.0.1"), port or ui_config.get("port", 20888))
+    return 0
+
+
+def run_command(home: Path, quest_id: str, skill_id: str, message: str, model: str | None) -> int:
+    ensure_home_layout(home)
+    config_manager = ConfigManager(home)
+    config_manager.ensure_files()
+    config = config_manager.load_named("config")
+    runners = config_manager.load_named("runners")
+    quest_root = home / "quests" / quest_id
+    codex_cfg = runners.get("codex", {})
+    logger = JsonlLogger(home / "logs", level=config.get("logging", {}).get("level", "info"))
+    runner = CodexRunner(
+        home=home,
+        repo_root=repo_root(),
+        binary=codex_cfg.get("binary", "codex"),
+        logger=logger,
+        prompt_builder=PromptBuilder(repo_root(), home),
+        artifact_service=ArtifactService(home),
+    )
+    request = RunRequest(
+        quest_id=quest_id,
+        quest_root=quest_root,
+        run_id=f"run-{skill_id}-{quest_id[-4:]}",
+        skill_id=skill_id,
+        message=message,
+        model=model or codex_cfg.get("model", "gpt-5.4"),
+        approval_policy=codex_cfg.get("approval_policy", "on-request"),
+        sandbox_mode=codex_cfg.get("sandbox_mode", "workspace-write"),
+    )
+    result = runner.run(request)
+    if result.output_text:
+        QuestService(home).append_message(quest_id, role="assistant", content=result.output_text, source="codex")
+    print(
+        json.dumps(
+            {
+                "ok": result.ok,
+                "run_id": result.run_id,
+                "model": result.model,
+                "exit_code": result.exit_code,
+                "history_root": str(result.history_root),
+                "run_root": str(result.run_root),
+                "output_text": result.output_text,
+                "stderr_text": result.stderr_text,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0 if result.ok else 1
+
+
+def ui_command(home: Path, mode: str) -> int:
+    config = ConfigManager(home).load_named("config", create_optional=False)
+    host = config.get("ui", {}).get("host", "127.0.0.1")
+    port = config.get("ui", {}).get("port", 20888)
+    url = f"http://{host}:{port}"
+    if mode in {"web", "both"}:
+        webbrowser.open(url)
+        print(f"Opened {url}")
+    if mode in {"tui", "both"}:
+        print(render_tui(url))
+    return 0
+
+
+def note_command(home: Path, quest_id: str, text: str) -> int:
+    quest_service = QuestService(home)
+    message = quest_service.append_message(quest_id, role="user", content=text, source="cli")
+    print(json.dumps(message, ensure_ascii=False, indent=2))
+    return 0
+
+
+def approve_command(home: Path, quest_id: str, decision_id: str, reason: str) -> int:
+    quest_root = home / "quests" / quest_id
+    result = ArtifactService(home).record(
+        quest_root,
+        {
+            "kind": "approval",
+            "decision_id": decision_id,
+            "reason": reason,
+        },
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+def graph_command(home: Path, quest_id: str) -> int:
+    from .gitops import export_git_graph
+
+    quest_root = home / "quests" / quest_id
+    payload = export_git_graph(quest_root, ensure_dir(quest_root / "artifacts" / "graphs"))
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+def metrics_command(home: Path, target: str) -> int:
+    if target.startswith("q-"):
+        quest_root = home / "quests" / target
+        runs = sorted((quest_root / "artifacts" / "runs").glob("*.json"))
+        payload = []
+        from .shared import read_json
+
+        for path in runs:
+            item = read_json(path, {})
+            payload.append(
+                {
+                    "run_id": item.get("run_id"),
+                    "run_kind": item.get("run_kind"),
+                    "exit_code": item.get("exit_code"),
+                    "summary": item.get("summary"),
+                }
+            )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    print(json.dumps({"message": "Run-level metrics lookup is not implemented yet."}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def push_command(home: Path, quest_id: str) -> int:
+    from .shared import run_command
+
+    quest_root = home / "quests" / quest_id
+    result = run_command(["git", "push"], cwd=quest_root, check=False)
+    print(
+        json.dumps(
+            {
+                "returncode": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0 if result.returncode == 0 else 1
+
+
+def memory_search_command(home: Path, query: str) -> int:
+    memory_service = MemoryService(home)
+    print(json.dumps(memory_service.search(query, scope="global"), ensure_ascii=False, indent=2))
+    return 0
+
+
+def baseline_list_command(home: Path) -> int:
+    registry = BaselineRegistry(home)
+    print(json.dumps(registry.list_entries(), ensure_ascii=False, indent=2))
+    return 0
+
+
+def baseline_attach_command(home: Path, quest_id: str, baseline_id: str, variant_id: str | None) -> int:
+    registry = BaselineRegistry(home)
+    attachment = registry.attach(home / "quests" / quest_id, baseline_id, variant_id)
+    print(json.dumps(attachment, ensure_ascii=False, indent=2))
+    return 0
+
+
+def config_show_command(home: Path, name: str) -> int:
+    manager = ConfigManager(home)
+    text = manager.load_named_text(name, create_optional=True)
+    sys.stdout.write(text)
+    return 0
+
+
+def config_edit_command(home: Path, name: str) -> int:
+    manager = ConfigManager(home)
+    path = manager.path_for(name)
+    if name in {"plugins", "mcp_servers"} and not path.exists():
+        manager.ensure_optional_file(name)
+    editor = os.environ.get("EDITOR")
+    if editor:
+        import subprocess
+
+        return subprocess.call([editor, str(path)])
+    print(str(path))
+    return 0
+
+
+def config_validate_command(home: Path) -> int:
+    manager = ConfigManager(home)
+    print(json.dumps(manager.validate_all(), ensure_ascii=False, indent=2))
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    home = resolve_home(args)
+
+    if args.command == "init":
+        return init_command(home)
+    if args.command == "new":
+        return new_command(home, args.goal, args.quest_id)
+    if args.command == "status":
+        return status_command(home, args.quest_id)
+    if args.command == "pause":
+        return pause_command(home, args.quest_id)
+    if args.command == "resume":
+        return resume_command(home, args.quest_id)
+    if args.command == "daemon":
+        return daemon_command(home, args.host, args.port)
+    if args.command == "run":
+        return run_command(home, args.quest_id, args.skill_id, args.message, args.model)
+    if args.command == "ui":
+        return ui_command(home, args.mode)
+    if args.command == "note":
+        return note_command(home, args.quest_id, args.text)
+    if args.command == "approve":
+        return approve_command(home, args.quest_id, args.decision_id, args.reason)
+    if args.command == "graph":
+        return graph_command(home, args.quest_id)
+    if args.command == "metrics":
+        return metrics_command(home, args.target)
+    if args.command == "push":
+        return push_command(home, args.quest_id)
+    if args.command == "memory" and args.memory_command == "search":
+        return memory_search_command(home, args.query)
+    if args.command == "baseline" and args.baseline_command == "list":
+        return baseline_list_command(home)
+    if args.command == "baseline" and args.baseline_command == "attach":
+        return baseline_attach_command(home, args.quest_id, args.baseline_id, args.variant_id)
+    if args.command == "config" and args.config_command == "show":
+        return config_show_command(home, args.name)
+    if args.command == "config" and args.config_command == "edit":
+        return config_edit_command(home, args.name)
+    if args.command == "config" and args.config_command == "validate":
+        return config_validate_command(home)
+    parser.error(f"Unknown command: {args.command}")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

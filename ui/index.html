@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeepScientist</title>
+    <link rel="stylesheet" href="/ui/app.css" />
+  </head>
+  <body>
+    <div class="aurora"></div>
+    <div class="app-shell">
+      <header class="topbar glass">
+        <div class="topbar-left">
+          <img class="logo" src="/assets/DeepScientist.png" alt="DeepScientist" />
+          <div>
+            <div class="eyebrow">DeepScientist Core</div>
+            <h1 id="topbar-title">Quests</h1>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <button id="refresh-button" class="ghost-btn">Refresh</button>
+          <button id="settings-button" class="ghost-btn">Settings</button>
+          <button id="locale-button" class="ghost-btn">中文</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="sidebar glass">
+          <div class="section-header">
+            <h2 data-i18n="quests">Quests</h2>
+          </div>
+          <form id="create-quest-form" class="create-form">
+            <textarea id="create-quest-goal" placeholder="Describe a new research quest"></textarea>
+            <button type="submit" class="primary-btn" data-i18n="createQuest">Create quest</button>
+          </form>
+          <div id="quest-list" class="quest-list"></div>
+        </aside>
+
+        <section class="main-panel">
+          <div class="stream glass">
+            <div class="section-header">
+              <h2 data-i18n="copilot">Copilot</h2>
+              <span id="active-quest-chip" class="chip">No quest selected</span>
+            </div>
+            <div id="history-list" class="history-list"></div>
+            <form id="chat-form" class="composer">
+              <textarea id="chat-input" placeholder="Talk to the active quest"></textarea>
+              <div class="composer-actions">
+                <button type="submit" class="primary-btn" data-i18n="send">Send</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="runner-row">
+            <div class="glass runner-card">
+              <div class="section-header">
+                <h2 data-i18n="runSkill">Run skill</h2>
+              </div>
+              <form id="run-form" class="run-form">
+                <select id="run-skill">
+                  <option value="decision">decision</option>
+                  <option value="scout">scout</option>
+                  <option value="baseline">baseline</option>
+                  <option value="idea">idea</option>
+                  <option value="experiment">experiment</option>
+                  <option value="analysis-campaign">analysis-campaign</option>
+                  <option value="write">write</option>
+                </select>
+                <input id="run-model" value="gpt-5.4" />
+                <textarea id="run-message" placeholder="What should Codex do next?"></textarea>
+                <button type="submit" class="primary-btn" data-i18n="run">Run</button>
+              </form>
+              <pre id="run-output" class="output-box"></pre>
+            </div>
+          </div>
+        </section>
+
+        <aside class="inspector glass">
+          <div class="section-block">
+            <div class="section-header">
+              <h2 data-i18n="status">Status</h2>
+            </div>
+            <div id="quest-status" class="kv-list"></div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-header">
+              <h2 data-i18n="memory">Memory</h2>
+            </div>
+            <div id="memory-list" class="card-list"></div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-header">
+              <h2 data-i18n="documents">Documents</h2>
+            </div>
+            <div id="document-list" class="card-list"></div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-header">
+              <h2 data-i18n="graph">Git graph</h2>
+            </div>
+            <pre id="graph-box" class="output-box small"></pre>
+          </div>
+
+          <div class="section-block">
+            <div class="section-header">
+              <h2 data-i18n="assets">Assets</h2>
+            </div>
+            <div id="asset-list" class="card-list"></div>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <dialog id="document-dialog" class="dialog">
+      <form method="dialog" class="dialog-shell glass">
+        <div class="section-header">
+          <h2 id="document-title">Document</h2>
+          <button class="ghost-btn">Close</button>
+        </div>
+        <textarea id="document-editor" class="dialog-editor"></textarea>
+        <div class="dialog-actions">
+          <button type="button" id="save-document-button" class="primary-btn">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="settings-dialog" class="dialog">
+      <form method="dialog" class="dialog-shell glass">
+        <div class="section-header">
+          <h2 data-i18n="settings">Settings</h2>
+          <button class="ghost-btn">Close</button>
+        </div>
+        <div id="settings-list" class="card-list"></div>
+      </form>
+    </dialog>
+
+    <script src="/ui/app.js" defer></script>
+  </body>
+</html>

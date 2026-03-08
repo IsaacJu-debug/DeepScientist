@@ -56,6 +56,46 @@ The docs assume:
 - required local TUI + local web UI and active connectors
 - optional reserved `deepscientist.cc` bridge that must never replace the local-first path
 
+## Current Code Map
+
+The current repository now includes a working core skeleton aligned to these docs:
+
+- runner entry:
+  - `src/deepscientist/runners/codex.py`
+- built-in MCP servers:
+  - `src/deepscientist/mcp/context.py`
+  - `src/deepscientist/mcp/server.py`
+- durable services:
+  - `src/deepscientist/memory/service.py`
+  - `src/deepscientist/artifact/service.py`
+  - `src/deepscientist/registries/baseline.py`
+- quest and document model:
+  - `src/deepscientist/quest/service.py`
+- git branch / worktree / graph support:
+  - `src/deepscientist/gitops/service.py`
+  - `src/deepscientist/gitops/graph.py`
+- daemon and shared API:
+  - `src/deepscientist/daemon/app.py`
+  - `src/deepscientist/daemon/api/handlers.py`
+- local web UI and TUI entry:
+  - `ui/index.html`
+  - `ui/app.css`
+  - `ui/app.js`
+  - `src/deepscientist/tui.py`
+- first-party skills:
+  - `skills/*/SKILL.md`
+
+Validated working slices now include:
+
+- `ds init`
+- `ds new`
+- `ds run ...` with real Codex
+- quest-local built-in `memory` + `artifact` MCP injection
+- local daemon HTTP API
+- quest memory / documents / config editing
+- baseline publish + attach
+- Git graph JSON + SVG + PNG export
+
 ## Reference Map
 
 The following external codebases and files are intentionally referenced throughout the docs:
