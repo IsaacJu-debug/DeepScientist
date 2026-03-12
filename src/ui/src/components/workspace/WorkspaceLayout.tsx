@@ -48,10 +48,13 @@ import { useFileTreeStore } from '@/lib/stores/file-tree'
 import { useTabsStore, useActiveTab } from '@/lib/stores/tabs'
 import { useChatSessionStore } from '@/lib/stores/session'
 import { useLabCopilotStore } from '@/lib/stores/lab-copilot'
+import { useLabGraphSelectionStore } from '@/lib/stores/lab-graph-selection'
 import { useOpenFile } from '@/hooks/useOpenFile'
 import { useProject, useUpdateProject } from '@/lib/hooks/useProjects'
+import { client as questClient } from '@/lib/api'
 import { createNotebook, getNotebook, listNotebooks } from '@/lib/api/notebooks'
 import { getMyToken, rotateMyToken } from '@/lib/api/auth'
+import { flattenQuestExplorerPayload, openQuestDocumentAsFileNode } from '@/lib/api/quest-files'
 import { checkProjectAccess } from '@/lib/api/projects'
 import { listLabAgents, listLabQuests, listLabTemplates } from '@/lib/api/lab'
 import { useCliStore } from '@/lib/plugins/cli/stores/cli-store'
@@ -81,7 +84,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { BUILTIN_PLUGINS } from '@/lib/types/plugin'
-import type { FileNode } from '@/lib/types/file'
+import { buildFileTree, type FileNode } from '@/lib/types/file'
 import type { Tab } from '@/lib/types/tab'
 import { searchFileNodes } from '@/lib/search/file-search'
 import { SearchIcon, SettingsIcon, SparklesIcon, LayoutIcon } from '@/components/ui/workspace-icons'
@@ -244,12 +247,14 @@ function getQuestWorkspaceTabView(
       : tabOrContext?.customData
   if (customData?.quest_workspace_view === 'details') return 'details'
   if (customData?.quest_workspace_view === 'terminal') return 'terminal'
+  if (customData?.quest_workspace_view === 'settings') return 'settings'
   return 'canvas'
 }
 
 function getQuestWorkspaceTitle(view: QuestWorkspaceView) {
   if (view === 'details') return 'Details'
   if (view === 'terminal') return 'Terminal'
+  if (view === 'settings') return 'Settings'
   return 'Canvas'
 }
 
@@ -330,6 +335,149 @@ const extractGithubUrl = (value: string) => {
     return `https://${normalized}`
   }
   return `https://${raw}`
+}
+
+const normalizeExplorerScopePath = (value?: string | null) =>
+  String(value || '')
+    .trim()
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+
+const isLikelyRelativeExplorerPath = (value?: string | null) => {
+  const text = String(value || '').trim()
+  if (!text) return false
+  if (text.startsWith('/')) return false
+  if (/^[a-zA-Z]:[\\/]/.test(text)) return false
+  return true
+}
+
+const pathInAnyScope = (path: string | undefined, scopes: string[]) => {
+  const normalizedPath = normalizeExplorerScopePath(path)
+  if (!normalizedPath) return scopes.length === 0
+  return scopes.some((scope) => {
+    if (!scope) return false
+    return (
+      normalizedPath === scope ||
+      normalizedPath.startsWith(`${scope}/`) ||
+      scope.startsWith(`${normalizedPath}/`)
+    )
+  })
+}
+
+const applyQuestTreeDecorations = (
+  nodes: FileNode[],
+  scopes: string[],
+  diffStatusByPath?: Map<string, string>
+): FileNode[] =>
+  nodes.map((node) => {
+    const normalizedPath = normalizeExplorerScopePath(node.path)
+    const nextChildren = node.children
+      ? applyQuestTreeDecorations(node.children, scopes, diffStatusByPath)
+      : node.children
+    const isScopeRoot = Boolean(normalizedPath && scopes.includes(normalizedPath))
+    const diffStatus = normalizedPath ? diffStatusByPath?.get(normalizedPath) ?? null : null
+    const badge =
+      diffStatus === 'modified'
+        ? 'M'
+        : diffStatus === 'added'
+          ? 'A'
+          : diffStatus === 'deleted'
+            ? 'D'
+            : diffStatus === 'renamed'
+              ? 'R'
+              : null
+    return {
+      ...node,
+      children: nextChildren,
+      uiMeta:
+        isScopeRoot || diffStatus
+          ? {
+              emphasis: diffStatus ? 'diff' : 'scope-root',
+              diffStatus,
+              badge,
+            }
+          : null,
+    }
+  })
+
+const buildScopedQuestTree = (
+  projectId: string,
+  payload: Parameters<typeof flattenQuestExplorerPayload>[1],
+  rawScopes: string[],
+  diffStatusByPath?: Map<string, string>
+) => {
+  const scopes = [...new Set(rawScopes.map((item) => normalizeExplorerScopePath(item)).filter(Boolean))]
+  const flatTree = flattenQuestExplorerPayload(projectId, payload)
+  const filterFiles = (activeScopes: string[]) =>
+    activeScopes.length === 0
+      ? flatTree.files
+      : flatTree.files.filter((item) => pathInAnyScope(item.path, activeScopes))
+  const buildNodes = (activeScopes: string[]) => {
+    const filteredFiles = filterFiles(activeScopes)
+    return applyQuestTreeDecorations(buildFileTree(filteredFiles), activeScopes, diffStatusByPath)
+  }
+
+  const scopedFiles = filterFiles(scopes)
+  const scopedNodes = applyQuestTreeDecorations(buildFileTree(scopedFiles), scopes, diffStatusByPath)
+  const hasConcreteScopedEntries = scopedFiles.some((item) => item.type !== 'folder')
+  if (scopes.length > 0 && (!scopedNodes.length || !hasConcreteScopedEntries)) {
+    return {
+      nodes: buildNodes([]),
+      requestedScopes: scopes,
+      appliedScopes: [] as string[],
+      fallbackToFullTree: true,
+    }
+  }
+  return {
+    nodes: scopedNodes,
+    requestedScopes: scopes,
+    appliedScopes: scopes,
+    fallbackToFullTree: false,
+  }
+}
+
+const resolveExplorerSnapshotRevision = (
+  selection:
+    | {
+        selection_type?: string | null
+        compare_head?: string | null
+        branch_name?: string | null
+      }
+    | null
+    | undefined
+) => {
+  if (!selection) return null
+  if (String(selection.selection_type || '') === 'baseline_node') {
+    return null
+  }
+  const compareHead = String(selection.compare_head || '').trim()
+  if (compareHead) return compareHead
+  const branchName = String(selection.branch_name || '').trim()
+  return branchName || null
+}
+
+type ExplorerLocationState = {
+  sourceMode: 'live' | 'snapshot'
+  selectionLabel: string | null
+  selectionType: string | null
+  revision: string | null
+  compareBase: string | null
+  compareHead: string | null
+  requestedScopes: string[]
+  appliedScopes: string[]
+  fallbackToFullTree: boolean
+}
+
+const DEFAULT_EXPLORER_LOCATION: ExplorerLocationState = {
+  sourceMode: 'live',
+  selectionLabel: null,
+  selectionType: null,
+  revision: null,
+  compareBase: null,
+  compareHead: null,
+  requestedScopes: [],
+  appliedScopes: [],
+  fallbackToFullTree: false,
 }
 
 function WorkspaceCommandPalette({
@@ -1515,14 +1663,29 @@ function LeftPanel({
   const readOnlyMode = Boolean(readOnly)
   const { addToast } = useToast()
   const openTab = useTabsStore((state) => state.openTab)
+  const graphSelection = useLabGraphSelectionStore((state) => state.selection)
   const { createFolder, upload, refresh, isLoading } = useFileTreeStore()
   const { openFileInTab, downloadFile, openNotebook } = useOpenFile()
   const fileInputRef = React.useRef<HTMLInputElement>(null)
   const explorerBodyRef = React.useRef<HTMLDivElement | null>(null)
-  const [activeExplorer, setActiveExplorer] = React.useState<'files'>('files')
+  const [activeExplorer, setActiveExplorer] = React.useState<'files' | 'scope' | 'diff'>('files')
   const [hideDotfiles, setHideDotfiles] = React.useState(true)
   const [createFileOpen, setCreateFileOpen] = React.useState(false)
   const [isMenuOpen, setIsMenuOpen] = React.useState(true)
+  const [scopedExplorerLabel, setScopedExplorerLabel] = React.useState<string | null>(null)
+  const [scopedExplorerNodes, setScopedExplorerNodes] = React.useState<FileNode[]>([])
+  const [scopedExplorerLoading, setScopedExplorerLoading] = React.useState(false)
+  const [explorerLocation, setExplorerLocation] =
+    React.useState<ExplorerLocationState>(DEFAULT_EXPLORER_LOCATION)
+  const [diffFiles, setDiffFiles] = React.useState<Array<{ path: string; status: string | null }>>([])
+  const [diffCompareBase, setDiffCompareBase] = React.useState<string | null>(null)
+  const [diffCompareHead, setDiffCompareHead] = React.useState<string | null>(null)
+  const [selectedDiffPath, setSelectedDiffPath] = React.useState<string | null>(null)
+  const [selectedDiffStatus, setSelectedDiffStatus] = React.useState<string | null>(null)
+  const [selectedDiffLines, setSelectedDiffLines] = React.useState<string[]>([])
+  const [selectedDiffTruncated, setSelectedDiffTruncated] = React.useState(false)
+  const [selectedDiffLoading, setSelectedDiffLoading] = React.useState(false)
+  const [scopedExplorerReloadKey, setScopedExplorerReloadKey] = React.useState(0)
   const menuSectionId = React.useId()
   const activeTab = useActiveTab()
   const activeQuestWorkspaceView = React.useMemo(() => {
@@ -1531,12 +1694,6 @@ function LeftPanel({
     }
     return getQuestWorkspaceTabView(activeTab)
   }, [activeTab, projectId])
-
-  React.useEffect(() => {
-    if (activeExplorer !== 'files') {
-      setActiveExplorer('files')
-    }
-  }, [activeExplorer])
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return
@@ -1551,6 +1708,191 @@ function LeftPanel({
       window.removeEventListener(EXPLORER_REFRESH_EVENT, handleRefresh)
     }
   }, [projectId])
+
+  React.useEffect(() => {
+    if (!localQuestMode || !graphSelection) {
+      setScopedExplorerLabel(null)
+      setScopedExplorerNodes([])
+      setExplorerLocation(DEFAULT_EXPLORER_LOCATION)
+      setDiffFiles([])
+      setDiffCompareBase(null)
+      setDiffCompareHead(null)
+      setSelectedDiffPath(null)
+      setSelectedDiffStatus(null)
+      setSelectedDiffLines([])
+      setSelectedDiffTruncated(false)
+      setScopedExplorerLoading(false)
+      if (activeExplorer !== 'files') {
+        setActiveExplorer('files')
+      }
+      return
+    }
+
+    if (!['branch_node', 'stage_node', 'baseline_node'].includes(String(graphSelection.selection_type || ''))) {
+      setScopedExplorerLabel(null)
+      setScopedExplorerNodes([])
+      setExplorerLocation(DEFAULT_EXPLORER_LOCATION)
+      setDiffFiles([])
+      setDiffCompareBase(null)
+      setDiffCompareHead(null)
+      setSelectedDiffPath(null)
+      setSelectedDiffStatus(null)
+      setSelectedDiffLines([])
+      setSelectedDiffTruncated(false)
+      if (activeExplorer !== 'files') {
+        setActiveExplorer('files')
+      }
+      return
+    }
+
+    const scopePaths = [
+      ...(graphSelection.scope_paths || []),
+      graphSelection.worktree_rel_path || '',
+    ]
+      .filter((item) => isLikelyRelativeExplorerPath(item))
+      .map((item) => normalizeExplorerScopePath(item))
+      .filter(Boolean)
+    const compareBase = String(graphSelection.compare_base || '').trim() || null
+    const compareHead = String(graphSelection.compare_head || '').trim() || null
+    const snapshotRevision = resolveExplorerSnapshotRevision(graphSelection)
+    let cancelled = false
+
+    setScopedExplorerLoading(true)
+
+    void (async () => {
+      try {
+        const diffStatusByPath = new Map<string, string>()
+        let nextDiffFiles: Array<{ path: string; status: string | null }> = []
+        let firstDiffPath: string | null = null
+
+        if (compareBase && compareHead && graphSelection.selection_type !== 'baseline_node') {
+          const compare = await questClient.gitCompare(projectId, compareBase, compareHead)
+          if (cancelled) return
+          const diffPaths = (compare.files || [])
+            .map((item) => normalizeExplorerScopePath(item.path))
+            .filter(Boolean)
+          ;(compare.files || []).forEach((item) => {
+            const normalizedPath = normalizeExplorerScopePath(item.path)
+            if (!normalizedPath) return
+            diffStatusByPath.set(normalizedPath, String(item.status || 'modified'))
+          })
+          nextDiffFiles = (compare.files || []).map((item) => ({
+            path: normalizeExplorerScopePath(item.path),
+            status: item.status || null,
+          }))
+          if (diffPaths.length) {
+            firstDiffPath = diffPaths[0] || null
+          }
+        }
+
+        let explorerPayload
+        let sourceMode: ExplorerLocationState['sourceMode'] = 'live'
+        if (snapshotRevision) {
+          try {
+            explorerPayload = await questClient.explorer(projectId, {
+              revision: snapshotRevision,
+              mode: 'ref',
+            })
+            if (cancelled) return
+            sourceMode = 'snapshot'
+          } catch (error) {
+            console.warn('[WorkspaceLayout] Failed to load explorer snapshot, falling back to live view:', error)
+            explorerPayload = await questClient.explorer(projectId)
+            if (cancelled) return
+          }
+        } else {
+          explorerPayload = await questClient.explorer(projectId)
+          if (cancelled) return
+        }
+
+        const scopeResult = buildScopedQuestTree(projectId, explorerPayload, scopePaths, diffStatusByPath)
+        const nextScopeNodes = scopeResult.nodes
+
+        setScopedExplorerLabel(graphSelection.label || graphSelection.stage_key || graphSelection.selection_ref || null)
+        setScopedExplorerNodes(nextScopeNodes)
+        setExplorerLocation({
+          sourceMode,
+          selectionLabel:
+            graphSelection.label || graphSelection.stage_key || graphSelection.selection_ref || null,
+          selectionType: graphSelection.selection_type || null,
+          revision: sourceMode === 'snapshot' ? snapshotRevision : null,
+          compareBase,
+          compareHead,
+          requestedScopes: scopeResult.requestedScopes,
+          appliedScopes: scopeResult.appliedScopes,
+          fallbackToFullTree: scopeResult.fallbackToFullTree,
+        })
+        setDiffFiles(nextDiffFiles)
+        setDiffCompareBase(compareBase)
+        setDiffCompareHead(compareHead)
+        setSelectedDiffPath((prev) => {
+          if (prev && diffStatusByPath.has(normalizeExplorerScopePath(prev))) {
+            return prev
+          }
+          return firstDiffPath
+        })
+        if (!nextDiffFiles.length) {
+          setSelectedDiffStatus(null)
+          setSelectedDiffLines([])
+          setSelectedDiffTruncated(false)
+        }
+        if (nextDiffFiles.length) {
+          setActiveExplorer('diff')
+        } else if (nextScopeNodes.length) {
+          setActiveExplorer('scope')
+        }
+      } catch (error) {
+        console.error('[WorkspaceLayout] Failed to build scoped explorer:', error)
+      } finally {
+        if (!cancelled) {
+          setScopedExplorerLoading(false)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    activeExplorer,
+    graphSelection,
+    localQuestMode,
+    projectId,
+    scopedExplorerReloadKey,
+  ])
+
+  React.useEffect(() => {
+    if (!localQuestMode || !selectedDiffPath || !diffCompareBase || !diffCompareHead) {
+      setSelectedDiffLoading(false)
+      return
+    }
+    let cancelled = false
+    setSelectedDiffLoading(true)
+    void questClient
+      .gitDiffFile(projectId, diffCompareBase, diffCompareHead, selectedDiffPath)
+      .then((payload) => {
+        if (cancelled) return
+        setSelectedDiffStatus(payload.status || null)
+        setSelectedDiffLines(payload.lines || [])
+        setSelectedDiffTruncated(Boolean(payload.truncated))
+      })
+      .catch((error) => {
+        if (cancelled) return
+        console.error('[WorkspaceLayout] Failed to load diff preview:', error)
+        setSelectedDiffStatus(null)
+        setSelectedDiffLines([])
+        setSelectedDiffTruncated(false)
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSelectedDiffLoading(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [diffCompareBase, diffCompareHead, localQuestMode, projectId, selectedDiffPath])
 
   const openPluginTab = React.useCallback(
     (pluginId: string, title: string, customData?: Record<string, unknown>) => {
@@ -1706,9 +2048,43 @@ function LeftPanel({
     }
   }, [addToast, refresh, t, tCommon])
 
+  const handleOpenDiffFile = React.useCallback(
+    async (path: string) => {
+      const preferredRevision = diffCompareHead || diffCompareBase
+      if (!preferredRevision) return
+      try {
+        const nextNode = await openQuestDocumentAsFileNode(projectId, `git::${preferredRevision}::${path}`)
+        await handleFileOpen(nextNode)
+      } catch (error) {
+        console.error('[WorkspaceLayout] Failed to open diff snapshot file:', error)
+        addToast({
+          type: 'error',
+          title: t('toast_download_failed'),
+          description: tCommon('generic_try_again', undefined, 'Please try again.'),
+        })
+      }
+    },
+    [addToast, diffCompareBase, diffCompareHead, handleFileOpen, projectId, t, tCommon]
+  )
+
   const isFilesView = activeExplorer === 'files'
+  const isScopeView = activeExplorer === 'scope'
+  const isDiffView = activeExplorer === 'diff'
+  const hasScopedExplorer = scopedExplorerNodes.length > 0
+  const hasDiffExplorer = diffFiles.length > 0
   const disableExplorerActions = readOnlyMode
   const disableExplorerMutations = readOnlyMode || localQuestMode
+  const explorerModeLabel = isDiffView
+    ? t('explorer_diff')
+    : isScopeView
+      ? t('explorer_snapshot')
+      : t('explorer_files')
+  const explorerSelectionLabel =
+    explorerLocation.selectionLabel || (isFilesView ? t('explorer_live_workspace') : null)
+  const explorerScopeLabel =
+    explorerLocation.appliedScopes.length > 0
+      ? explorerLocation.appliedScopes.join(', ')
+      : t('explorer_full_tree')
 
   const handleExplorerNewFile = React.useCallback(() => {
     if (disableExplorerMutations) return
@@ -1727,8 +2103,12 @@ function LeftPanel({
 
   const handleExplorerRefresh = React.useCallback(() => {
     if (disableExplorerActions) return
-    void handleRefresh()
-  }, [disableExplorerActions, handleRefresh])
+    if (isFilesView) {
+      void handleRefresh()
+      return
+    }
+    setScopedExplorerReloadKey((value) => value + 1)
+  }, [disableExplorerActions, handleRefresh, isFilesView])
 
   return (
     <div className="panel left-panel" style={{ width, minWidth: width }}>
@@ -1760,7 +2140,7 @@ function LeftPanel({
             <button
               type="button"
               className={cn(
-                'inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors',
+                'inline-flex h-7 items-center justify-center rounded-full px-3 text-[10px] font-semibold tracking-[0.12em] transition-colors',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9b8352]/40',
                 isFilesView
                   ? 'bg-[#9b8352] text-white shadow-sm'
@@ -1772,8 +2152,46 @@ function LeftPanel({
               aria-label={t('explorer_files')}
               title={t('explorer_files')}
             >
-              <FileText className="h-4 w-4" />
+              {t('explorer_files').toUpperCase()}
             </button>
+            {hasScopedExplorer ? (
+              <button
+                type="button"
+                className={cn(
+                  'inline-flex h-7 items-center justify-center rounded-full px-3 text-[10px] font-semibold tracking-[0.12em] transition-colors',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9b8352]/40',
+                  isScopeView
+                    ? 'bg-[#9b8352] text-white shadow-sm'
+                    : 'text-[var(--text-muted-on-dark)] hover:bg-[#9b8352]/[0.18] hover:text-[var(--text-on-dark)]'
+                )}
+                onClick={() => setActiveExplorer('scope')}
+                role="tab"
+                aria-selected={isScopeView}
+                aria-label={t('explorer_snapshot')}
+                title={scopedExplorerLabel || t('explorer_snapshot')}
+              >
+                {t('explorer_snapshot').toUpperCase()}
+              </button>
+            ) : null}
+            {hasDiffExplorer ? (
+              <button
+                type="button"
+                className={cn(
+                  'inline-flex h-7 items-center justify-center rounded-full px-3 text-[10px] font-semibold tracking-[0.12em] transition-colors',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9b8352]/40',
+                  isDiffView
+                    ? 'bg-[#9b8352] text-white shadow-sm'
+                    : 'text-[var(--text-muted-on-dark)] hover:bg-[#9b8352]/[0.18] hover:text-[var(--text-on-dark)]'
+                )}
+                onClick={() => setActiveExplorer('diff')}
+                role="tab"
+                aria-selected={isDiffView}
+                aria-label={t('explorer_diff')}
+                title={t('explorer_diff')}
+              >
+                {t('explorer_diff').toUpperCase()}
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
@@ -1858,7 +2276,11 @@ function LeftPanel({
               variant="ghost"
               size="icon"
               onClick={handleExplorerRefresh}
-              disabled={disableExplorerActions || (isFilesView ? isLoading : false)}
+              disabled={
+                disableExplorerActions ||
+                (isFilesView ? isLoading : false) ||
+                (!isFilesView && scopedExplorerLoading)
+              }
               className="h-7 w-7 rounded-lg p-0 text-[var(--text-muted-on-dark)] hover:bg-white/[0.08] hover:text-[var(--text-on-dark)] disabled:opacity-50"
               title={
                 disableExplorerActions
@@ -1884,6 +2306,50 @@ function LeftPanel({
           />
         </div>
 
+        <div className="border-b border-[var(--border-dark)] px-4 py-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-white/[0.08] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-on-dark)]">
+              {explorerModeLabel}
+            </span>
+            {explorerSelectionLabel ? (
+              <span className="rounded-full border border-white/[0.1] px-2.5 py-1 text-[10px] font-medium text-[var(--text-on-dark)]">
+                {explorerSelectionLabel}
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-2 space-y-1 text-[11px] leading-5 text-[var(--text-muted-on-dark)]">
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              <span>
+                <span className="mr-1 text-[var(--text-on-dark)]">{t('explorer_location')}</span>
+                {explorerLocation.sourceMode === 'snapshot'
+                  ? t('explorer_branch_snapshot')
+                  : t('explorer_live_workspace')}
+              </span>
+              {explorerLocation.revision ? (
+                <span>
+                  <span className="mr-1 text-[var(--text-on-dark)]">{t('explorer_revision')}</span>
+                  {explorerLocation.revision}
+                </span>
+              ) : null}
+            </div>
+            {explorerLocation.compareBase && explorerLocation.compareHead ? (
+              <div className="break-words">
+                <span className="mr-1 text-[var(--text-on-dark)]">{t('explorer_compare')}</span>
+                {explorerLocation.compareBase} {'->'} {explorerLocation.compareHead}
+              </div>
+            ) : null}
+            <div className="break-words">
+              <span className="mr-1 text-[var(--text-on-dark)]">{t('explorer_scope')}</span>
+              {explorerScopeLabel}
+              {explorerLocation.fallbackToFullTree ? (
+                <span className="ml-2 text-[10px] uppercase tracking-[0.12em] text-[#d39b61]">
+                  {t('explorer_scope_fallback')}
+                </span>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
         <div ref={explorerBodyRef} className="flex-1 min-h-0 overflow-hidden flex flex-col">
           <div
             className={cn(
@@ -1902,6 +2368,117 @@ function LeftPanel({
                 readOnly={readOnlyMode}
                 hideDotfiles={hideDotfiles}
               />
+            </div>
+          </div>
+
+          <div
+            className={cn(
+              'flex-1 min-h-0 overflow-hidden',
+              isScopeView ? 'flex flex-col' : 'hidden'
+            )}
+            role="tabpanel"
+            aria-hidden={!isScopeView}
+          >
+            <div className="flex-1 min-h-0 file-tree-dark flex flex-col">
+              <FileTree
+                projectId={projectId}
+                onFileOpen={handleFileOpen}
+                onFileDownload={handleFileDownload}
+                className="flex-1 min-h-0"
+                readOnly
+                hideDotfiles={hideDotfiles}
+                nodesOverride={scopedExplorerNodes}
+                loadingOverride={scopedExplorerLoading}
+                emptyLabel={scopedExplorerLabel ? `No files in ${scopedExplorerLabel}.` : 'No scoped files.'}
+              />
+            </div>
+          </div>
+
+          <div
+            className={cn(
+              'flex-1 min-h-0 overflow-hidden',
+              isDiffView ? 'flex flex-col' : 'hidden'
+            )}
+            role="tabpanel"
+            aria-hidden={!isDiffView}
+          >
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="border-b border-[var(--border-dark)] px-4 py-2 text-[11px] text-[var(--text-muted-on-dark)]">
+                {diffCompareBase && diffCompareHead
+                  ? `${diffCompareBase} -> ${diffCompareHead}`
+                  : 'Diff preview'}
+              </div>
+              <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+                <div className="min-h-0 overflow-y-auto px-2 py-2 file-tree-scroll">
+                  <div className="space-y-1">
+                    {diffFiles.map((item) => (
+                      <button
+                        key={item.path}
+                        type="button"
+                        className={cn(
+                          'flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors',
+                          selectedDiffPath === item.path
+                            ? 'bg-[rgba(205,152,96,0.18)] text-[var(--text-on-dark)]'
+                            : 'text-[var(--text-muted-on-dark)] hover:bg-white/[0.06] hover:text-[var(--text-on-dark)]'
+                        )}
+                        onClick={() => setSelectedDiffPath(item.path)}
+                        onDoubleClick={() => void handleOpenDiffFile(item.path)}
+                      >
+                        <span className="min-w-0 truncate">{item.path}</span>
+                        <span className="ml-3 shrink-0 rounded-full bg-[rgba(205,152,96,0.16)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#d39b61]">
+                          {String(item.status || 'modified').slice(0, 1).toUpperCase()}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="min-h-0 border-t border-[var(--border-dark)] bg-black/[0.08]">
+                  <div className="flex items-center justify-between border-b border-[var(--border-dark)] px-4 py-2 text-[11px] text-[var(--text-muted-on-dark)]">
+                    {selectedDiffPath ? (
+                      <button
+                        type="button"
+                        className="inline-flex min-w-0 items-center gap-1 truncate text-left text-[var(--text-on-dark)] transition hover:text-[#f2d8bf]"
+                        onClick={() => void handleOpenDiffFile(selectedDiffPath)}
+                        title={t('explorer_open_snapshot_file')}
+                      >
+                        <span className="truncate">{selectedDiffPath}</span>
+                        <ExternalLink className="h-3 w-3 shrink-0" />
+                      </button>
+                    ) : (
+                      <span className="truncate">Select a file to inspect diff.</span>
+                    )}
+                    <span>{selectedDiffStatus || 'patch'}</span>
+                  </div>
+                  <div className="file-tree-scroll h-full overflow-y-auto px-0 py-0 font-mono text-[11px] leading-5 text-[var(--text-on-dark)]">
+                    {selectedDiffLoading ? (
+                      <div className="px-4 py-4 text-[var(--text-muted-on-dark)]">Loading diff…</div>
+                    ) : selectedDiffLines.length ? (
+                      selectedDiffLines.map((line, index) => (
+                        <div
+                          key={`${selectedDiffPath || 'diff'}:${index}`}
+                          className={cn(
+                            'whitespace-pre-wrap break-words px-4 py-0.5',
+                            line.startsWith('+') && 'bg-[rgba(110,138,118,0.18)] text-[#d9f0dc]',
+                            line.startsWith('-') && 'bg-[rgba(156,92,92,0.16)] text-[#ffd6d6]',
+                            line.startsWith('@@') && 'bg-white/[0.06] text-[#e8dccd]'
+                          )}
+                        >
+                          {line || ' '}
+                        </div>
+                      ))
+                    ) : (
+                      <div className="px-4 py-4 text-[var(--text-muted-on-dark)]">
+                        Select a changed file to inspect its patch.
+                      </div>
+                    )}
+                    {selectedDiffTruncated ? (
+                      <div className="border-t border-[var(--border-dark)] px-4 py-2 text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted-on-dark)]">
+                        Diff truncated
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1949,6 +2526,14 @@ function LeftPanel({
                 active={activeQuestWorkspaceView === 'terminal'}
                 onClick={() => {
                   openQuestWorkspaceTab('terminal')
+                }}
+              />
+              <SidebarButton
+                icon={<Settings className="h-4 w-4" />}
+                label={t('quest_workspace_settings')}
+                active={activeQuestWorkspaceView === 'settings'}
+                onClick={() => {
+                  openQuestWorkspaceTab('settings')
                 }}
               />
             </div>

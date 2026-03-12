@@ -378,6 +378,12 @@ Do not continue searching just to collect more papers after the next anchor is a
 
 ## Memory rules
 
+Stage-start requirement:
+
+- begin every scout pass with `memory.list_recent(scope='quest', limit=5)`
+- then run at least one scout-relevant `memory.search(...)` before broad new search
+- if several idea or baseline lines already exist, narrow retrieval to the current line instead of mixing unrelated memory casually
+
 Write durable memory only when it is reusable later.
 
 Preferred memory usage:
@@ -424,6 +430,10 @@ Recommended read timing:
   - re-check quest `decisions` and shortlist-related notes
 - after a long pause:
   - warm-start from quest `papers` and `knowledge` before re-searching
+
+Stage-end requirement:
+
+- if scouting produced a durable framing conclusion, paper note, shortlist lesson, or metric-contract caveat, write at least one `memory.write(...)` before leaving the stage
 
 When writing quest `papers` cards, include enough metadata to reduce repeated scouting later:
 

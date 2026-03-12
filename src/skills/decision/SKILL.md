@@ -87,6 +87,11 @@ In the current runtime, prefer these concrete flow actions:
 - launch analysis campaign -> `artifact.create_analysis_campaign(...)`
 - finish one analysis slice -> `artifact.record_analysis_slice(...)`
 
+If the chosen action is baseline reuse, the decision is not complete until one of these is durably true:
+
+- the reuse landed on `artifact.attach_baseline(...)` plus `artifact.confirm_baseline(...)`
+- or the quest recorded an explicit blocker or waiver explaining why reuse could not be completed safely
+
 Treat `prepare_branch` as a compatibility or recovery action, not the normal path.
 
 ## Truth sources

@@ -105,6 +105,13 @@ Do not proceed to `idea` or `experiment` unless one of the following is durably 
 - a baseline reproduction has completed and been verified
 - an explicit waiver decision exists with a clear reason
 
+Operationally, the canonical exit is stricter:
+
+- after the accepted baseline root is clear, call `artifact.confirm_baseline(...)`
+- if the quest must continue without a baseline, call `artifact.waive_baseline(...)`
+
+`attach`, `import`, `publish`, or a plain `baseline` artifact alone do not open the downstream gate.
+
 ## Truth sources
 
 Use the following as baseline truth sources:
@@ -147,6 +154,7 @@ The baseline stage should usually leave behind:
 - a verification note or report under the quest
 - command, config, environment, and metrics pointers
 - a baseline artifact
+- a confirmed baseline gate via `artifact.confirm_baseline(...)`, or an explicit waiver via `artifact.waive_baseline(...)`
 - an optional registry publication if the baseline is reusable beyond this quest
 
 ## Stable execution contract
@@ -167,7 +175,7 @@ Recommended phase-to-output mapping:
 - `analysis` -> `analysis_plan.md` plus optional route decision artifact
 - `setup` -> `setup.md`
 - `execution` -> `execution.md` plus progress artifacts when long-running
-- `verification` -> `verification.md` plus accepted baseline artifact or blocked report
+- `verification` -> `verification.md` plus accepted baseline artifact and `artifact.confirm_baseline(...)`, or a blocked report plus `artifact.waive_baseline(...)` when skipping is intentional
 
 If the work skips one of these durable outputs, explain why the baseline remains interpretable without it.
 
@@ -182,6 +190,7 @@ Quest-local paths:
 - attachment record: `<quest_root>/baselines/imported/<baseline_id>/attachment.yaml`
 - baseline artifact record: `<quest_root>/artifacts/baselines/<artifact_id>.json`
 - baseline reports: `<quest_root>/artifacts/reports/<artifact_id>.json`
+- confirmed baseline reference: `quest.yaml -> confirmed_baseline_ref`
 
 Global reusable registry paths:
 
@@ -873,6 +882,12 @@ If the current quest should reuse an existing baseline:
 - preserve the selected `variant_id` when one is used
 - ensure the resulting attachment record is durable under `baselines/imported/`
 
+If runtime state already includes `requested_baseline_ref` or a matching `confirmed_baseline_ref`:
+
+- default to reuse-and-verify, not rediscovery
+- treat a creation-time pre-bound baseline as the active starting point unless you find a concrete incompatibility
+- do not rerun broad baseline scouting or full reproduction just because the stage name is `baseline`
+
 Do not publish a baseline that is still blocked, speculative, or verification-incomplete.
 Do not attach a baseline without explaining why it is the right reference for the quest.
 
@@ -950,6 +965,12 @@ The quest repo remains the durable authority for promotion and narrative state.
 
 ## Memory rules
 
+Stage-start requirement:
+
+- begin every baseline pass with `memory.list_recent(scope='quest', limit=5)`
+- then run at least one baseline-relevant `memory.search(...)` before new baseline analysis, repair, or rerun work
+- if several baseline or idea lines exist, narrow retrieval to the active baseline route instead of mixing notes from unrelated lines
+
 Write to memory only when the lesson is reusable, such as:
 
 - baseline pitfalls
@@ -1005,6 +1026,10 @@ Recommended read timing:
   - re-check quest `knowledge` and `decisions`
 - before publishing globally:
   - confirm the lesson is truly reusable and not only quest-local
+
+Stage-end requirement:
+
+- if baseline work produced a durable reproduction lesson, verification caveat, environment incident, or route rationale, write at least one `memory.write(...)` before leaving the stage
 
 For a fuller memory strategy, read `references/memory-playbook.md`.
 

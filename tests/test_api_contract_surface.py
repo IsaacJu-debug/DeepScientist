@@ -14,10 +14,15 @@ def _read(path: str) -> str:
 
 def test_backend_routes_cover_shared_web_and_tui_surface() -> None:
     expected_routes = [
+        ("GET", "/api/baselines", "baselines"),
         ("GET", "/api/quests", "quests"),
         ("POST", "/api/quests", "quest_create"),
         ("GET", "/api/connectors", "connectors"),
+        ("POST", "/api/quests/q-001/baseline-binding", "quest_baseline_binding"),
+        ("DELETE", "/api/quests/q-001/baseline-binding", "quest_baseline_unbind"),
         ("PATCH", "/api/quests/q-001/settings", "quest_settings"),
+        ("POST", "/api/quests/q-001/bindings", "quest_bindings"),
+        ("DELETE", "/api/quests/q-001", "quest_delete"),
         ("GET", "/api/quests/q-001/session", "quest_session"),
         ("GET", "/api/quests/q-001/events", "quest_events"),
         ("GET", "/api/quests/q-001/artifacts", "quest_artifacts"),
@@ -63,10 +68,14 @@ def test_backend_routes_cover_shared_web_and_tui_surface() -> None:
 def test_web_client_uses_acp_and_git_surface_expected_by_backend() -> None:
     source = _read("src/ui/src/lib/api.ts")
     bash_source = _read("src/ui/src/lib/api/bash.ts")
+    lab_source = _read("src/ui/src/lib/api/lab.ts")
 
     expected_fragments = [
+        "/api/baselines",
         "/api/quests/${questId}/session",
         "/api/quests/${questId}/settings",
+        "/api/quests/${questId}/bindings",
+        "/api/quests/${questId}`",
         "format=acp",
         "session_id=quest:${questId}",
         "stream=1",
@@ -104,6 +113,14 @@ def test_web_client_uses_acp_and_git_surface_expected_by_backend() -> None:
 
     for fragment in bash_fragments:
         assert fragment in bash_source, f"Bash API client is missing contract fragment: {fragment}"
+
+    lab_fragments = [
+        "/baseline-binding",
+        "questClient.baselines()",
+    ]
+
+    for fragment in lab_fragments:
+        assert fragment in lab_source, f"Lab API client is missing contract fragment: {fragment}"
 
 
 def test_web_workspace_keeps_streaming_operational_views_and_tool_effect_surface() -> None:
@@ -185,6 +202,7 @@ def test_local_quest_workspace_uses_real_canvas_and_details_tabs() -> None:
         "openQuestWorkspaceTab('canvas')",
         "openQuestWorkspaceTab('details')",
         "openQuestWorkspaceTab('terminal')",
+        "openQuestWorkspaceTab('settings')",
         "title: getQuestWorkspaceTitle(view)",
         "return getQuestWorkspaceTabView(resolvedTab)",
         "view={resolvedQuestWorkspaceView}",
@@ -198,8 +216,10 @@ def test_local_quest_workspace_uses_real_canvas_and_details_tabs() -> None:
         "const view = controlledView ?? uncontrolledView",
         "view === 'canvas' ? (",
         "view === 'terminal' ? (",
+        "view === 'settings' ? (",
         "<QuestCanvasSurface",
         "<QuestTerminalSurface",
+        "<QuestSettingsSurface",
         "<QuestDetails",
     ]
     for fragment in expected_surface_fragments:

@@ -6,7 +6,7 @@ export type WorkspaceLeftVisibilityDetail = {
   visible: boolean
 }
 
-export type QuestWorkspaceView = 'canvas' | 'details' | 'terminal'
+export type QuestWorkspaceView = 'canvas' | 'details' | 'terminal' | 'settings'
 
 export type QuestWorkspaceViewDetail = {
   projectId: string

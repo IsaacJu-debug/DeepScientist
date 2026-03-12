@@ -69,7 +69,7 @@ class ApiHandlers:
                 "notifications": False,
                 "broadcasts": False,
                 "points": False,
-                "arxiv": False,
+                "arxiv": True,
                 "cliFrontend": False,
             },
         }
@@ -188,6 +188,9 @@ npm --prefix src/ui run build</pre>
     def connectors(self) -> list[dict]:
         return [channel.status() for channel in self.app.channels.values()]
 
+    def baselines(self) -> list[dict]:
+        return self.app.artifact_service.baselines.list_entries()
+
     def bridge_webhook(self, connector: str, *, method: str, path: str, raw_body: bytes, headers: dict[str, str], body: dict) -> tuple[int, dict, bytes | str] | dict:
         return self.app.handle_bridge_webhook(
             connector,
@@ -218,13 +221,110 @@ npm --prefix src/ui run build</pre>
         title = body.get("title", "").strip() or None
         quest_id = body.get("quest_id", "").strip() or None
         source = body.get("source", "").strip() or "web"
+        requested_baseline_ref = body.get("requested_baseline_ref")
+        startup_contract = body.get("startup_contract")
         if not goal:
             return {"ok": False, "message": "Quest goal is required."}
-        snapshot = self.app.create_quest(goal=goal, title=title, quest_id=quest_id, source=source)
+        try:
+            snapshot = self.app.create_quest(
+                goal=goal,
+                title=title,
+                quest_id=quest_id,
+                source=source,
+                requested_baseline_ref=requested_baseline_ref if isinstance(requested_baseline_ref, dict) else None,
+                startup_contract=startup_contract if isinstance(startup_contract, dict) else None,
+            )
+        except FileExistsError as exc:
+            return 409, {"ok": False, "message": str(exc)}
+        except ValueError as exc:
+            return 400, {"ok": False, "message": str(exc)}
+        except RuntimeError as exc:
+            return 409, {"ok": False, "message": str(exc)}
         return {"ok": True, "snapshot": snapshot}
+
+    def quest_baseline_binding(self, quest_id: str, body: dict) -> dict | tuple[int, dict]:
+        baseline_id = str(body.get("baseline_id") or "").strip()
+        variant_id = str(body.get("variant_id") or "").strip() or None
+        if not baseline_id:
+            return 400, {"ok": False, "message": "`baseline_id` is required."}
+        quest_root = Path(self.app.home / "quests" / quest_id)
+        if not quest_root.exists():
+            return 404, {"ok": False, "message": f"Unknown quest `{quest_id}`."}
+        attachment_result = self.app.artifact_service.attach_baseline(quest_root, baseline_id, variant_id)
+        if not attachment_result.get("ok"):
+            return 409, {
+                "ok": False,
+                "conflict": True,
+                "message": str(
+                    attachment_result.get("message")
+                    or "Baseline is attached but not materializable yet; cannot confirm baseline gate automatically."
+                ),
+                "quest_id": quest_id,
+                "binding_action": "attach_failed",
+                "attachment": attachment_result.get("attachment"),
+                "snapshot": self.app.quest_service.snapshot(quest_id),
+            }
+        attachment = attachment_result.get("attachment") if isinstance(attachment_result, dict) else None
+        materialization = attachment.get("materialization") if isinstance(attachment, dict) else None
+        materialization_status = str((materialization or {}).get("status") or "").strip().lower()
+        if materialization_status and materialization_status != "ok":
+            return 409, {
+                "ok": False,
+                "conflict": True,
+                "message": "Baseline is attached but not materializable yet; cannot confirm baseline gate automatically.",
+                "quest_id": quest_id,
+                "binding_action": "attach_only",
+                "attachment": attachment,
+                "snapshot": self.app.quest_service.snapshot(quest_id),
+            }
+        try:
+            confirm = self.app.artifact_service.confirm_baseline(
+                quest_root,
+                baseline_path=f"baselines/imported/{baseline_id}",
+                baseline_id=baseline_id,
+                variant_id=variant_id,
+                summary=f"Baseline `{baseline_id}` confirmed via API binding.",
+            )
+        except FileNotFoundError as exc:
+            return 409, {"ok": False, "message": str(exc), "quest_id": quest_id}
+        except ValueError as exc:
+            return 400, {"ok": False, "message": str(exc), "quest_id": quest_id}
+        snapshot = self.app.quest_service.snapshot(quest_id)
+        return {
+            "ok": True,
+            "quest_id": quest_id,
+            "binding_action": "attach_and_confirm",
+            "attachment": attachment,
+            "baseline_registry_entry": confirm.get("baseline_registry_entry"),
+            "snapshot": snapshot,
+        }
+
+    def quest_baseline_unbind(self, quest_id: str) -> dict | tuple[int, dict]:
+        quest_root = Path(self.app.home / "quests" / quest_id)
+        if not quest_root.exists():
+            return 404, {"ok": False, "message": f"Unknown quest `{quest_id}`."}
+        quest_data = self.app.quest_service.update_baseline_state(
+            quest_root,
+            baseline_gate="pending",
+            confirmed_baseline_ref=None,
+            active_anchor="baseline",
+        )
+        return {
+            "ok": True,
+            "quest_id": quest_id,
+            "binding_action": "cleared",
+            "baseline_gate": quest_data.get("baseline_gate"),
+            "snapshot": self.app.quest_service.snapshot(quest_id),
+        }
 
     def quest(self, quest_id: str) -> dict:
         return self.app.quest_service.snapshot(quest_id)
+
+    def quest_delete(self, quest_id: str, body: dict | None = None) -> dict | tuple[int, dict]:
+        source = "web"
+        if body and body.get("source"):
+            source = str(body.get("source") or "").strip() or "web"
+        return self.app.delete_quest(quest_id, source=source)
 
     def quest_settings(self, quest_id: str, body: dict) -> dict | tuple[int, dict]:
         updates = {
@@ -247,6 +347,12 @@ npm --prefix src/ui run build</pre>
             "ok": True,
             "snapshot": snapshot,
         }
+
+    def quest_bindings(self, quest_id: str, body: dict) -> dict | tuple[int, dict]:
+        conversation_id = str(body.get("conversation_id") or body.get("source") or "").strip() or None
+        force_raw = body.get("force")
+        force = bool(force_raw) and str(force_raw).strip().lower() not in {"0", "false", "no", "off"}
+        return self.app.update_quest_binding(quest_id, conversation_id, force=force)
 
     def quest_session(self, quest_id: str) -> dict:
         snapshot = self.app.quest_service.snapshot(quest_id)

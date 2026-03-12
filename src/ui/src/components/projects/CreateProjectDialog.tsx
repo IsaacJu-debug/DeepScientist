@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { client } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
 import {
   applyStartResearchContractPreset,
@@ -24,6 +25,7 @@ import {
   type StartResearchTemplateEntry,
 } from '@/lib/startResearch'
 import { cn } from '@/lib/utils'
+import type { BaselineRegistryEntry } from '@/types'
 
 const copy = {
   en: {
@@ -63,9 +65,12 @@ const copy = {
     goalLabel: 'Primary research request',
     goalPlaceholder: 'State the core scientific question, target paper, hypothesis, and what success would look like.',
     goalHelp: 'This should describe the actual problem to solve, not implementation details.',
-    baselineRoot: 'Baseline root id',
-    baselineRootPlaceholder: 'baseline/<name> or artifact id',
-    baselineRootHelp: 'Use this when you already have a reusable baseline stored in DeepScientist.',
+    baselineRoot: 'Reusable baseline',
+    baselineRootPlaceholder: 'Select a reusable baseline entry (optional)',
+    baselineRootHelp:
+      'Pick a previously confirmed reusable baseline entry from the global registry. Runtime will attach and confirm it before the new quest starts.',
+    baselineVariant: 'Baseline variant',
+    baselineVariantHelp: 'Optional: choose a specific baseline variant when the entry contains multiple variants.',
     baselineUrls: 'Baseline links',
     baselineUrlsPlaceholder: 'One repository or artifact URL per line',
     baselineUrlsHelp: 'Provide source repositories or artifacts that help recover the baseline quickly.',
@@ -171,9 +176,11 @@ const copy = {
     goalLabel: '核心研究请求',
     goalPlaceholder: '清楚说明科学问题、目标论文、核心假设，以及什么结果算成功。',
     goalHelp: '这里应该描述真正要解决的问题，而不是过早写实现细节。',
-    baselineRoot: 'Baseline root id',
-    baselineRootPlaceholder: 'baseline/<name> 或 artifact id',
-    baselineRootHelp: '如果你已经在 DeepScientist 里有可复用 baseline，可以在这里直接指定。',
+    baselineRoot: '复用 Baseline',
+    baselineRootPlaceholder: '选择一个可复用的 baseline 条目（可选）',
+    baselineRootHelp: '选择全局 registry 中已经确认可复用的 baseline。运行时会在新 quest 创建前自动 attach 并 confirm；留空则从零开始建立 baseline。',
+    baselineVariant: 'Baseline variant',
+    baselineVariantHelp: '可选：当 baseline entry 里包含多个 variant 时，可以在这里指定。',
     baselineUrls: 'Baseline 链接',
     baselineUrlsPlaceholder: '每行一个仓库或 artifact 链接',
     baselineUrlsHelp: '这些链接用于帮助系统更快恢复或修复 baseline。',
@@ -417,6 +424,61 @@ function splitOptionCopy(text: string) {
   }
 }
 
+function sanitizeLines(value: string) {
+  return String(value || '')
+    .split('\n')
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function clampText(value: string, limit = 48) {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim()
+  if (!normalized) return ''
+  if (normalized.length <= limit) return normalized
+  return `${normalized.slice(0, Math.max(0, limit - 1)).trimEnd()}…`
+}
+
+function resolveBaselineMetricLabel(entry: BaselineRegistryEntry | null, locale: 'en' | 'zh') {
+  if (!entry) return locale === 'zh' ? '暂无主指标' : 'No primary metric'
+  const primaryMetric = entry.primary_metric
+  if (primaryMetric && typeof primaryMetric === 'object') {
+    const metricKey = String(
+      (primaryMetric as Record<string, unknown>).metric_id ||
+        (primaryMetric as Record<string, unknown>).name ||
+        ''
+    ).trim()
+    const metricValue = (primaryMetric as Record<string, unknown>).value
+    if (metricKey && metricValue != null) {
+      return `${metricKey}: ${String(metricValue)}`
+    }
+  }
+  const metricsSummary = entry.metrics_summary
+  if (metricsSummary && typeof metricsSummary === 'object') {
+    const firstMetric = Object.entries(metricsSummary).find(([, value]) => value != null)
+    if (firstMetric) {
+      return `${firstMetric[0]}: ${String(firstMetric[1])}`
+    }
+  }
+  return locale === 'zh' ? '暂无主指标' : 'No primary metric'
+}
+
+function formatBaselineTimestamp(value: string | null | undefined, locale: 'en' | 'zh') {
+  if (!value) return locale === 'zh' ? '未知' : 'Unknown'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat(locale === 'zh' ? 'zh-CN' : 'en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  }).format(date)
+}
+
+function formatBaselineStatus(value: string | null | undefined, locale: 'en' | 'zh') {
+  const normalized = String(value || '').trim()
+  if (!normalized) return locale === 'zh' ? '未知' : 'unknown'
+  return normalized.replace(/_/g, ' ')
+}
+
 export function CreateProjectDialog({
   open,
   loading,
@@ -430,7 +492,13 @@ export function CreateProjectDialog({
   error?: string | null
   initialGoal?: string
   onClose: () => void
-  onCreate: (payload: { title: string; goal: string; quest_id?: string }) => Promise<void>
+  onCreate: (payload: {
+    title: string
+    goal: string
+    quest_id?: string
+    requested_baseline_ref?: { baseline_id: string; variant_id?: string | null } | null
+    startup_contract?: Record<string, unknown> | null
+  }) => Promise<void>
 }) {
   const { locale } = useI18n()
   const t = copy[locale]
@@ -439,6 +507,9 @@ export function CreateProjectDialog({
   const [manualOverride, setManualOverride] = useState(false)
   const [templates, setTemplates] = useState<StartResearchTemplateEntry[]>([])
   const [selectedTemplateId, setSelectedTemplateId] = useState('__latest__')
+  const [baselineEntries, setBaselineEntries] = useState<BaselineRegistryEntry[]>([])
+  const [baselineEntriesLoading, setBaselineEntriesLoading] = useState(false)
+  const [baselineEntriesError, setBaselineEntriesError] = useState<string | null>(null)
 
   const activeContractPresetId = useMemo(
     () => detectStartResearchContractPreset(form),
@@ -528,20 +599,10 @@ export function CreateProjectDialog({
     setManualOverride(false)
   }, [initialGoal, locale, open])
 
-  const compiledPromptPreview = useMemo(() => compileStartResearchPrompt(form), [form])
-
-  useEffect(() => {
-    if (!open || manualOverride) {
-      return
-    }
-    setPromptDraft(compiledPromptPreview)
-  }, [compiledPromptPreview, manualOverride, open])
-
-  const finalPrompt = promptDraft.trim() || (!manualOverride ? compiledPromptPreview.trim() : '')
-  const promptRequired = open && !finalPrompt
-  const goalRequired = open && !manualOverride && !form.goal.trim()
-
-  const setField = <K extends keyof StartResearchTemplate>(key: K, value: StartResearchTemplate[K]) => {
+  const setField = <K extends keyof StartResearchTemplate>(
+    key: K,
+    value: StartResearchTemplate[K]
+  ) => {
     setForm((current) => {
       const next = { ...current, [key]: value }
       if (key === 'title' && !current.quest_id) {
@@ -560,6 +621,95 @@ export function CreateProjectDialog({
       return next
     })
   }
+
+  useEffect(() => {
+    if (!open) return
+    let active = true
+    setBaselineEntriesLoading(true)
+    setBaselineEntriesError(null)
+    void client
+      .baselines()
+      .then((payload) => {
+        if (!active) return
+        const entries = Array.isArray(payload) ? payload : []
+        const sorted = [...entries].sort((left, right) =>
+          String(right.updated_at || right.created_at || '').localeCompare(String(left.updated_at || left.created_at || ''))
+        )
+        setBaselineEntries(sorted)
+      })
+      .catch((caught) => {
+        if (!active) return
+        setBaselineEntries([])
+        setBaselineEntriesError(caught instanceof Error ? caught.message : 'Failed to load baselines.')
+      })
+      .finally(() => {
+        if (active) setBaselineEntriesLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [open])
+
+  const selectedBaselineEntry = useMemo(() => {
+    const baselineId = form.baseline_id?.trim()
+    if (!baselineId) return null
+    return baselineEntries.find((entry) => entry.baseline_id === baselineId) ?? null
+  }, [baselineEntries, form.baseline_id])
+
+  useEffect(() => {
+    if (!open || manualOverride) return
+    const baselineId = form.baseline_id?.trim()
+    if (!baselineId) {
+      if (form.baseline_variant_id) {
+        setField('baseline_variant_id', '')
+      }
+      return
+    }
+    const entry = baselineEntries.find((item) => item.baseline_id === baselineId)
+    if (!entry) return
+    const variants = Array.isArray(entry.baseline_variants) ? entry.baseline_variants : []
+    if (variants.length === 0) {
+      if (form.baseline_variant_id) {
+        setField('baseline_variant_id', '')
+      }
+      return
+    }
+    const currentVariant = form.baseline_variant_id?.trim()
+    if (currentVariant && variants.some((variant) => variant.variant_id === currentVariant)) {
+      return
+    }
+    const nextVariant = String(entry.default_variant_id || variants[0]?.variant_id || '').trim()
+    if (nextVariant && nextVariant !== currentVariant) {
+      setField('baseline_variant_id', nextVariant)
+    }
+  }, [
+    baselineEntries,
+    form.baseline_id,
+    form.baseline_variant_id,
+    manualOverride,
+    open,
+  ])
+
+  useEffect(() => {
+    if (!open || manualOverride) return
+    if (!form.baseline_id?.trim()) return
+    if (form.baseline_mode !== 'existing') {
+      setField('baseline_mode', 'existing')
+    }
+  }, [form.baseline_id, form.baseline_mode, manualOverride, open])
+
+  const compiledPromptPreview = useMemo(() => compileStartResearchPrompt(form), [form])
+
+  useEffect(() => {
+    if (!open || manualOverride) {
+      return
+    }
+    setPromptDraft(compiledPromptPreview)
+  }, [compiledPromptPreview, manualOverride, open])
+
+  const finalPrompt = promptDraft.trim() || (!manualOverride ? compiledPromptPreview.trim() : '')
+  const promptRequired = open && !finalPrompt
+  const goalRequired = open && !manualOverride && !form.goal.trim()
 
   const handlePromptChange = (value: string) => {
     if (!manualOverride && value !== compiledPromptPreview) {
@@ -595,7 +745,8 @@ export function CreateProjectDialog({
       title: next.title,
       quest_id: next.quest_id || deriveQuestRepoId(next),
       goal: next.goal,
-      baseline_root_id: next.baseline_root_id,
+      baseline_id: next.baseline_id,
+      baseline_variant_id: next.baseline_variant_id || '',
       baseline_urls: next.baseline_urls,
       paper_urls: next.paper_urls,
       runtime_constraints: next.runtime_constraints,
@@ -625,10 +776,34 @@ export function CreateProjectDialog({
       return
     }
     const saved = saveStartResearchTemplate(form)
+    const baselineId = saved.baseline_id.trim()
+    const baselineVariantId = saved.baseline_variant_id.trim()
+    const requestedBaselineRef = baselineId
+      ? {
+          baseline_id: baselineId,
+          variant_id: baselineVariantId || null,
+        }
+      : null
+    const timeBudget = Number(saved.time_budget_hours)
+    const startupContract = {
+      schema_version: 1,
+      user_language: saved.user_language,
+      scope: saved.scope,
+      baseline_mode: saved.baseline_mode,
+      resource_policy: saved.resource_policy,
+      time_budget_hours: Number.isFinite(timeBudget) && timeBudget > 0 ? timeBudget : null,
+      git_strategy: saved.git_strategy,
+      runtime_constraints: saved.runtime_constraints,
+      objectives: sanitizeLines(saved.objectives),
+      baseline_urls: sanitizeLines(saved.baseline_urls),
+      paper_urls: sanitizeLines(saved.paper_urls),
+    }
     await onCreate({
       title: saved.title,
       goal: finalPrompt,
       quest_id: saved.quest_id || undefined,
+      requested_baseline_ref: requestedBaselineRef,
+      startup_contract: startupContract,
     })
   }
 
@@ -733,13 +908,71 @@ export function CreateProjectDialog({
               <SectionCard title={t.references}>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <InlineField label={t.baselineRoot} help={t.baselineRootHelp}>
-                    <Input
-                      value={form.baseline_root_id}
-                      onChange={(event) => setField('baseline_root_id', event.target.value)}
-                      placeholder={t.baselineRootPlaceholder}
-                      className="rounded-[10px] border-[rgba(45,42,38,0.09)] bg-white/75 text-xs dark:border-[rgba(45,42,38,0.09)] dark:bg-white/78"
-                      disabled={manualOverride}
-                    />
+                    <div className="space-y-2">
+                      <select
+                        value={form.baseline_id}
+                        onChange={(event) => setField('baseline_id', event.target.value)}
+                        className={selectClassName}
+                        disabled={manualOverride}
+                      >
+                        <option value="">
+                          {baselineEntriesLoading
+                            ? locale === 'zh'
+                              ? '正在加载 baselines…'
+                              : 'Loading baselines…'
+                            : t.baselineRootPlaceholder}
+                        </option>
+                        {form.baseline_id &&
+                        !baselineEntries.some((entry) => entry.baseline_id === form.baseline_id.trim()) ? (
+                          <option value={form.baseline_id}>{form.baseline_id} (custom)</option>
+                        ) : null}
+                        {baselineEntries.map((entry) => {
+                          const status = formatBaselineStatus(entry.status, locale)
+                          const sourceQuest = String(entry.source_quest_id || '').trim()
+                          const label = [entry.baseline_id, status, sourceQuest].filter(Boolean).join(' · ')
+                          return (
+                            <option key={entry.baseline_id} value={entry.baseline_id}>
+                              {clampText(label, 88)}
+                            </option>
+                          )
+                        })}
+                      </select>
+
+                      {selectedBaselineEntry?.baseline_variants?.length ? (
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1.5 text-[11px] font-medium text-[rgba(75,73,69,0.78)] dark:text-[rgba(75,73,69,0.78)]">
+                            <span>{t.baselineVariant}</span>
+                            <FieldHelp text={t.baselineVariantHelp} />
+                          </div>
+                          <select
+                            value={form.baseline_variant_id}
+                            onChange={(event) => setField('baseline_variant_id', event.target.value)}
+                            className={selectClassName}
+                            disabled={manualOverride}
+                          >
+                            {selectedBaselineEntry.baseline_variants.map((variant) => (
+                              <option key={variant.variant_id} value={variant.variant_id}>
+                                {variant.label ? `${variant.variant_id} · ${variant.label}` : variant.variant_id}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : null}
+
+                      {selectedBaselineEntry ? (
+                        <div className="rounded-lg border border-[rgba(45,42,38,0.08)] bg-white/70 px-3 py-2.5 text-[11px] leading-5 text-[rgba(75,73,69,0.82)] dark:border-[rgba(45,42,38,0.08)] dark:bg-white/76 dark:text-[rgba(75,73,69,0.82)]">
+                          <div>{selectedBaselineEntry.summary ? clampText(String(selectedBaselineEntry.summary), 120) : (locale === 'zh' ? '未提供概要。' : 'No summary provided.')}</div>
+                          <div className="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 sm:grid-cols-2">
+                            <div>{locale === 'zh' ? '状态' : 'Status'}: {formatBaselineStatus(selectedBaselineEntry.status, locale)}</div>
+                            <div>{locale === 'zh' ? '来源 Quest' : 'Source quest'}: {selectedBaselineEntry.source_quest_id || (locale === 'zh' ? '未知' : 'unknown')}</div>
+                            <div>{locale === 'zh' ? '主指标' : 'Primary metric'}: {resolveBaselineMetricLabel(selectedBaselineEntry, locale)}</div>
+                            <div>{locale === 'zh' ? '确认时间' : 'Confirmed'}: {formatBaselineTimestamp(selectedBaselineEntry.confirmed_at || selectedBaselineEntry.updated_at, locale)}</div>
+                          </div>
+                        </div>
+                      ) : baselineEntriesError ? (
+                        <div className="text-[11px] leading-5 text-[#9a1b1b]">{baselineEntriesError}</div>
+                      ) : null}
+                    </div>
                   </InlineField>
                   <InlineField label={t.languageLabel} help={t.languageHelp}>
                     <select
@@ -759,7 +992,7 @@ export function CreateProjectDialog({
                     onChange={(event) => setField('baseline_urls', event.target.value)}
                     placeholder={t.baselineUrlsPlaceholder}
                     className="min-h-[92px] rounded-[10px] border-[rgba(45,42,38,0.09)] bg-white/75 text-xs leading-5 dark:border-[rgba(45,42,38,0.09)] dark:bg-white/78"
-                    disabled={manualOverride}
+                    disabled={manualOverride || Boolean(form.baseline_id?.trim())}
                   />
                 </InlineField>
                 <InlineField label={t.paperUrls} help={t.paperUrlsHelp}>
@@ -804,7 +1037,7 @@ export function CreateProjectDialog({
                   value={form.baseline_mode}
                   items={baselineModeItems}
                   onChange={(value) => setField('baseline_mode', value)}
-                  disabled={manualOverride}
+                  disabled={manualOverride || Boolean(form.baseline_id?.trim())}
                 />
                 <ChoiceField
                   label={t.resourcePolicyLabel}

@@ -15,6 +15,24 @@ from deepscientist.shared import run_command, write_text
 from deepscientist.skills import SkillInstaller
 
 
+def _confirm_local_baseline(artifact: ArtifactService, quest_root: Path, baseline_id: str = "baseline-local") -> None:
+    baseline_root = quest_root / "baselines" / "local" / baseline_id
+    baseline_root.mkdir(parents=True, exist_ok=True)
+    (baseline_root / "README.md").write_text("# Baseline\n", encoding="utf-8")
+    artifact.confirm_baseline(
+        quest_root,
+        baseline_path=str(baseline_root),
+        baseline_id=baseline_id,
+        summary=f"Confirmed {baseline_id}",
+        metrics_summary={"acc": 0.8},
+        primary_metric={"name": "acc", "value": 0.8},
+        metric_contract={
+            "primary_metric_id": "acc",
+            "metrics": [{"metric_id": "acc", "direction": "higher"}],
+        },
+    )
+
+
 def test_git_branch_canvas_distinguishes_major_and_analysis_branches(temp_home: Path) -> None:
     ensure_home_layout(temp_home)
     ConfigManager(temp_home).ensure_files()
@@ -164,6 +182,7 @@ def test_git_branch_canvas_reads_artifacts_from_worktrees(temp_home: Path) -> No
     quest_id = quest["quest_id"]
     quest_root = Path(quest["quest_root"])
     artifact = ArtifactService(temp_home)
+    _confirm_local_baseline(artifact, quest_root)
 
     idea = artifact.submit_idea(
         quest_root,
@@ -218,6 +237,9 @@ def test_git_branch_canvas_marks_breakthrough_and_metrics_timeline(temp_home: Pa
     quest_id = quest["quest_id"]
     quest_root = Path(quest["quest_root"])
     artifact = ArtifactService(temp_home)
+    baseline_root = quest_root / "baselines" / "local" / "baseline-graph"
+    baseline_root.mkdir(parents=True, exist_ok=True)
+    (baseline_root / "README.md").write_text("# Graph baseline\n", encoding="utf-8")
 
     artifact.record(
         quest_root,
@@ -233,6 +255,13 @@ def test_git_branch_canvas_marks_breakthrough_and_metrics_timeline(temp_home: Pa
         },
     )
     artifact.attach_baseline(quest_root, "baseline-graph", "main")
+    artifact.confirm_baseline(
+        quest_root,
+        baseline_path="baselines/imported/baseline-graph",
+        baseline_id="baseline-graph",
+        variant_id="main",
+        summary="Baseline graph confirmed",
+    )
     idea = artifact.submit_idea(
         quest_root,
         mode="create",

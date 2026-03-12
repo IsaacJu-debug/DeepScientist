@@ -43,6 +43,7 @@ def test_prompt_builder_includes_layered_runtime_context(temp_home: Path) -> Non
     assert "current_workspace_root:" in prompt
     assert "built_in_mcp_namespaces: memory, artifact, bash_exec" in prompt
     assert "artifact.arxiv(paper_id=..., full_text=False)" in prompt
+    assert "artifact.confirm_baseline(...)" in prompt
     assert "Canonical stage skills root:" in prompt
     assert "Standard stage skill paths:" in prompt
     assert "## Current User Message" in prompt
@@ -188,6 +189,67 @@ def test_prompt_builder_mentions_record_main_experiment_protocol(temp_home: Path
     assert "RESULT.json" in prompt
 
 
+def test_prompt_builder_mentions_baseline_gate_protocol(temp_home: Path) -> None:
+    builder, snapshot = _make_builder(temp_home)
+
+    prompt = builder.build(
+        quest_id=snapshot["quest_id"],
+        skill_id="baseline",
+        user_message="确认 baseline 之后再继续。",
+        model="gpt-5.4",
+    )
+
+    assert "baseline_gate: pending" in prompt
+    assert "confirmed_baseline_ref: none" in prompt
+    assert "artifact.confirm_baseline(...)" in prompt
+    assert "artifact.waive_baseline(...)" in prompt
+    assert "Attach, import, or publish alone does not open the downstream workflow." in prompt
+
+
+def test_prompt_builder_includes_requested_baseline_and_prebound_runtime_policy(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    service = QuestService(temp_home, skill_installer=SkillInstaller(repo_root(), temp_home))
+    snapshot = service.create(
+        "prompt builder prebound baseline quest",
+        requested_baseline_ref={"baseline_id": "demo-baseline", "variant_id": "v2"},
+        startup_contract={
+            "scope": "baseline_only",
+            "baseline_mode": "existing",
+        },
+    )
+    quest_root = Path(snapshot["quest_root"])
+    imported_root = quest_root / "baselines" / "imported" / "demo-baseline"
+    imported_root.mkdir(parents=True, exist_ok=True)
+    service.update_baseline_state(
+        quest_root,
+        baseline_gate="confirmed",
+        confirmed_baseline_ref={
+            "baseline_id": "demo-baseline",
+            "variant_id": "v2",
+            "baseline_path": str(imported_root),
+            "baseline_root_rel_path": "baselines/imported/demo-baseline",
+            "source_mode": "imported",
+            "confirmed_at": "2026-03-12T00:00:00Z",
+        },
+        active_anchor="idea",
+    )
+
+    builder = PromptBuilder(repo_root(), temp_home)
+    prompt = builder.build(
+        quest_id=snapshot["quest_id"],
+        skill_id="baseline",
+        user_message="Continue with the pre-bound baseline.",
+        model="gpt-5.4",
+    )
+
+    assert 'requested_baseline_ref: {"baseline_id": "demo-baseline", "variant_id": "v2"}' in prompt
+    assert 'startup_contract: {"baseline_mode": "existing", "scope": "baseline_only"}' in prompt
+    assert "confirmed_baseline_import_root: baselines/imported/demo-baseline" in prompt
+    assert "prebound_baseline_ready: True" in prompt
+    assert "do not redo baseline discovery or reproduction unless you find a concrete incompatibility" in prompt
+
+
 def test_prompt_builder_mentions_long_running_bash_exec_monitoring_protocol(temp_home: Path) -> None:
     builder, snapshot = _make_builder(temp_home)
 
@@ -222,3 +284,23 @@ def test_prompt_builder_mentions_queued_user_message_mailbox(temp_home: Path) ->
 
     assert "pending_user_message_count: 1" in prompt
     assert "queued user messages waiting to be picked up via artifact.interact" in prompt
+
+
+def test_prompt_builder_mentions_memory_call_protocol_and_exploration_efficiency(temp_home: Path) -> None:
+    builder, snapshot = _make_builder(temp_home)
+
+    prompt = builder.build(
+        quest_id=snapshot["quest_id"],
+        skill_id="idea",
+        user_message="Please explore the next efficient direction.",
+        model="gpt-5.4",
+    )
+
+    assert "### `memory` call protocol" in prompt
+    assert "memory.list_recent(scope='quest', limit=5)" in prompt
+    assert "memory.search(query='<task or dataset or baseline>'" in prompt
+    assert "first review prior idea and experiment memory as reference material" in prompt
+    assert "review prior quest experiment records, failures, and result summaries" in prompt
+    assert "outcome status such as `success`, `partial`, or `failure`" in prompt
+    assert "### Exploration efficiency protocol" in prompt
+    assert "Preserve the current best verified branch as the elite line." in prompt

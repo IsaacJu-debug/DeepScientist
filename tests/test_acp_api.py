@@ -118,6 +118,20 @@ def test_acp_artifact_update_exposes_flow_metadata(temp_home: Path) -> None:
     quest_id = quest["quest_id"]
     app = DaemonApp(temp_home)
     quest_root = Path(quest["quest_root"])
+    baseline_root = quest_root / "baselines" / "local" / "acp-baseline"
+    baseline_root.mkdir(parents=True, exist_ok=True)
+    app.artifact_service.confirm_baseline(
+        quest_root,
+        baseline_path=str(baseline_root),
+        baseline_id="acp-baseline",
+        summary="ACP baseline confirmed",
+        metrics_summary={"acc": 0.8},
+        primary_metric={"name": "acc", "value": 0.8},
+        metric_contract={
+            "primary_metric_id": "acc",
+            "metrics": [{"metric_id": "acc", "direction": "higher"}],
+        },
+    )
 
     result = app.artifact_service.submit_idea(
         quest_root,

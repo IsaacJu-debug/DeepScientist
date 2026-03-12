@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ from ..shared import (
     read_jsonl,
     read_text,
     read_yaml,
+    resolve_within,
     run_command,
     slugify,
     utc_now,
@@ -236,6 +238,260 @@ class ArtifactService:
             ),
         )
 
+    def _resolve_baseline_path(
+        self,
+        quest_root: Path,
+        baseline_path: str,
+        *,
+        baseline_id: str | None = None,
+    ) -> dict[str, Any]:
+        raw = str(baseline_path or "").strip()
+        if not raw:
+            raise ValueError("`baseline_path` is required.")
+        candidate = Path(raw)
+        resolved = candidate.resolve() if candidate.is_absolute() else resolve_within(quest_root, raw)
+        if not resolved.exists():
+            raise FileNotFoundError(f"Baseline path does not exist: {resolved}")
+        try:
+            relative = resolved.relative_to(quest_root.resolve()).as_posix()
+        except ValueError as exc:
+            raise ValueError("`baseline_path` must stay within quest_root.") from exc
+        parts = Path(relative).parts
+        if len(parts) < 3 or parts[0] != "baselines" or parts[1] not in {"local", "imported"}:
+            raise ValueError(
+                "`baseline_path` must live under `baselines/local/<baseline_id>/...` or "
+                "`baselines/imported/<baseline_id>/...`."
+            )
+        source_mode = "local" if parts[1] == "local" else "imported"
+        inferred_baseline_id = str(baseline_id or parts[2]).strip()
+        baseline_root = quest_root / parts[0] / parts[1] / parts[2]
+        return {
+            "resolved_path": resolved,
+            "relative_path": relative,
+            "baseline_root": baseline_root,
+            "baseline_root_rel_path": baseline_root.relative_to(quest_root).as_posix(),
+            "source_mode": source_mode,
+            "baseline_id": inferred_baseline_id,
+        }
+
+    def _latest_baseline_record(self, quest_root: Path, baseline_id: str) -> dict[str, Any] | None:
+        matches: list[dict[str, Any]] = []
+        seen_paths: set[str] = set()
+        for root in self.quest_service.workspace_roots(quest_root):
+            artifacts_root = root / "artifacts" / "baselines"
+            if not artifacts_root.exists():
+                continue
+            for path in sorted(artifacts_root.glob("*.json")):
+                if not path.is_file():
+                    continue
+                key = str(path.resolve())
+                if key in seen_paths:
+                    continue
+                seen_paths.add(key)
+                payload = read_json(path, {})
+                if not isinstance(payload, dict) or not payload:
+                    continue
+                if str(payload.get("baseline_id") or "").strip() != baseline_id:
+                    continue
+                matches.append(payload)
+        if not matches:
+            return None
+        return max(matches, key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""))
+
+    def _baseline_entry_from_local_state(
+        self,
+        quest_root: Path,
+        *,
+        baseline_id: str,
+        baseline_root: Path,
+        variant_id: str | None,
+        summary: str | None,
+        baseline_kind: str | None,
+        metric_contract: dict[str, Any] | None,
+        metrics_summary: dict[str, Any] | None,
+        primary_metric: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        existing = self._latest_baseline_record(quest_root, baseline_id) or {}
+        normalized_metrics = normalize_metrics_summary(metrics_summary or existing.get("metrics_summary"))
+        existing_variants = existing.get("baseline_variants") if isinstance(existing.get("baseline_variants"), list) else []
+        normalized_variant_id = str(variant_id or existing.get("default_variant_id") or "").strip() or None
+        baseline_variants = existing_variants
+        if normalized_variant_id and not baseline_variants:
+            baseline_variants = [
+                {
+                    "variant_id": normalized_variant_id,
+                    "label": normalized_variant_id,
+                    "metrics_summary": normalized_metrics,
+                }
+            ]
+        default_variant_id = normalized_variant_id or existing.get("default_variant_id")
+        if baseline_variants and default_variant_id is None and len(baseline_variants) == 1:
+            default_variant_id = baseline_variants[0].get("variant_id")
+        selected_variant = None
+        if baseline_variants:
+            selected_variant = next(
+                (
+                    item
+                    for item in baseline_variants
+                    if str(item.get("variant_id") or "").strip() == str(default_variant_id or "").strip()
+                ),
+                baseline_variants[0],
+            )
+        normalized_contract = normalize_metric_contract(
+            metric_contract or existing.get("metric_contract"),
+            baseline_id=baseline_id,
+            metrics_summary=normalized_metrics,
+            primary_metric=primary_metric or existing.get("primary_metric"),
+            baseline_variants=baseline_variants,
+        )
+        entry = {
+            "registry_kind": "baseline",
+            "schema_version": 1,
+            "entry_id": baseline_id,
+            "baseline_id": baseline_id,
+            "status": "quest_local",
+            "created_at": existing.get("created_at") or utc_now(),
+            "updated_at": utc_now(),
+            "path": str(baseline_root),
+            "summary": summary or existing.get("summary") or "",
+            "baseline_kind": baseline_kind or existing.get("baseline_kind") or "reproduced",
+            "primary_metric": primary_metric or existing.get("primary_metric"),
+            "metrics_summary": normalized_metrics,
+            "baseline_variants": baseline_variants,
+            "default_variant_id": default_variant_id,
+            "metric_contract": normalized_contract,
+        }
+        return entry, selected_variant
+
+    def _write_confirmed_baseline_attachment(
+        self,
+        quest_root: Path,
+        *,
+        baseline_id: str,
+        variant_id: str | None,
+        entry: dict[str, Any],
+        selected_variant: dict[str, Any] | None,
+        source_mode: str,
+        baseline_root: Path,
+        comment: str | dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        attachment_root = ensure_dir(quest_root / "baselines" / "imported" / baseline_id)
+        attachment_path = attachment_root / "attachment.yaml"
+        existing = read_yaml(attachment_path, {})
+        if not isinstance(existing, dict):
+            existing = {}
+        attachment = {
+            **existing,
+            "attached_at": utc_now(),
+            "source_baseline_id": baseline_id,
+            "source_variant_id": variant_id,
+            "entry": entry,
+            "selected_variant": selected_variant,
+            "confirmation": {
+                "source_mode": source_mode,
+                "baseline_root": str(baseline_root),
+                "comment": comment,
+            },
+        }
+        write_yaml(attachment_path, attachment)
+        return attachment
+
+    def _copy_tree_contents(self, source_root: Path, target_root: Path) -> None:
+        ensure_dir(target_root)
+        for child in sorted(source_root.iterdir()):
+            if child.name == "attachment.yaml":
+                continue
+            target = target_root / child.name
+            if child.is_dir():
+                shutil.copytree(child, target, dirs_exist_ok=True)
+                continue
+            ensure_dir(target.parent)
+            shutil.copy2(child, target)
+
+    def _materialize_baseline_attachment(self, quest_root: Path, attachment: dict[str, Any]) -> dict[str, Any]:
+        baseline_id = str(attachment.get("source_baseline_id") or "").strip()
+        if not baseline_id:
+            raise ValueError("Attachment is missing `source_baseline_id`.")
+        entry = dict(attachment.get("entry") or {}) if isinstance(attachment.get("entry"), dict) else {}
+        source_raw = str(entry.get("path") or "").strip()
+        target_root = ensure_dir(quest_root / "baselines" / "imported" / baseline_id)
+        materialized: dict[str, Any] = {**attachment}
+        materialized["materialization"] = {
+            "status": "skipped",
+            "source_path": source_raw or None,
+            "target_path": str(target_root),
+            "error": None,
+        }
+
+        if source_raw:
+            source_root = Path(source_raw).expanduser().resolve()
+            if source_root.exists() and source_root.is_dir():
+                if source_root != target_root.resolve():
+                    self._copy_tree_contents(source_root, target_root)
+                materialized["materialized_at"] = utc_now()
+                materialized["materialized_path"] = str(target_root)
+                materialized["source_path"] = str(source_root)
+                materialized["materialization"] = {
+                    "status": "ok",
+                    "source_path": str(source_root),
+                    "target_path": str(target_root),
+                    "error": None,
+                }
+            else:
+                materialized["materialization"] = {
+                    "status": "error",
+                    "source_path": str(source_root),
+                    "target_path": str(target_root),
+                    "error": "source_path_missing_or_not_directory",
+                }
+        write_yaml(target_root / "attachment.yaml", materialized)
+        return materialized
+
+    def _sync_confirmed_baseline_registry_entry(
+        self,
+        *,
+        quest_root: Path,
+        baseline_id: str,
+        variant_id: str | None,
+        entry: dict[str, Any],
+        selected_variant: dict[str, Any] | None,
+        resolved_root: Path,
+        summary: str | None,
+        source_mode: str,
+    ) -> dict[str, Any]:
+        source_path = str(entry.get("path") or "").strip() or str(resolved_root)
+        materializable = bool(source_path) and Path(source_path).expanduser().is_dir()
+        registry_payload = {
+            **entry,
+            "baseline_id": baseline_id,
+            "entry_id": baseline_id,
+            "status": "quest_confirmed",
+            "summary": summary or entry.get("summary") or "",
+            "path": source_path,
+            "source_mode": source_mode,
+            "source_quest_id": quest_root.name,
+            "source_baseline_path": source_path,
+            "confirmed_at": utc_now(),
+            "selected_variant_id": variant_id or (selected_variant or {}).get("variant_id"),
+            "materializable": materializable,
+            "availability": "ready" if materializable else "missing",
+            "default_variant_id": entry.get("default_variant_id"),
+            "baseline_variants": entry.get("baseline_variants") or [],
+            "metric_contract": entry.get("metric_contract"),
+            "primary_metric": entry.get("primary_metric"),
+            "metrics_summary": entry.get("metrics_summary") or {},
+        }
+        return self.baselines.publish(registry_payload)
+
+    def _require_baseline_gate_open(self, quest_root: Path, *, action: str) -> None:
+        quest_yaml = self.quest_service.read_quest_yaml(quest_root)
+        if str(quest_yaml.get("baseline_gate") or "pending").strip().lower() in {"confirmed", "waived"}:
+            return
+        raise ValueError(
+            f"`{action}` requires a confirmed or waived baseline gate. "
+            "Use `artifact.confirm_baseline(...)` or `artifact.waive_baseline(...)` first."
+        )
+
     def _main_run_artifacts(self, quest_root: Path) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
         seen_paths: set[str] = set()
@@ -341,6 +597,20 @@ class ArtifactService:
         record = self._build_record(quest_root, payload, workspace_root=write_root)
         guidance_vm = build_guidance_for_record(record)
         record["guidance_vm"] = guidance_vm
+        guidance_text = guidance_summary(guidance_vm) or guidance_for_kind(record["kind"])
+        recommended_skill = (
+            str(guidance_vm.get("recommended_skill") or "").strip()
+            if isinstance(guidance_vm, dict)
+            else ""
+        )
+        recommended_skill_reads = [recommended_skill] if recommended_skill else []
+        suggested_artifact_calls = (
+            guidance_vm.get("suggested_artifact_calls") if isinstance(guidance_vm, dict) else []
+        )
+        if not isinstance(suggested_artifact_calls, list):
+            suggested_artifact_calls = []
+        next_anchor = recommended_skill or None
+        next_instruction = guidance_text
         artifact_id = record["artifact_id"]
         artifact_path = self._artifact_path(write_root, record["kind"], artifact_id)
         write_json(artifact_path, record)
@@ -369,7 +639,7 @@ class ArtifactService:
                 "status": record.get("status"),
                 "summary": record.get("summary") or record.get("message"),
                 "reason": record.get("reason"),
-                "guidance": guidance_summary(guidance_vm) or guidance_for_kind(record["kind"]),
+                "guidance": guidance_text,
                 "guidance_vm": guidance_vm,
                 "paths": record.get("paths") or {},
                 "interaction_id": record.get("interaction_id"),
@@ -445,8 +715,12 @@ class ArtifactService:
             "ok": True,
             "artifact_id": artifact_id,
             "path": str(artifact_path),
-            "guidance": guidance_summary(guidance_vm) or guidance_for_kind(record["kind"]),
+            "guidance": guidance_text,
             "guidance_vm": guidance_vm,
+            "next_anchor": next_anchor,
+            "recommended_skill_reads": recommended_skill_reads,
+            "suggested_artifact_calls": suggested_artifact_calls,
+            "next_instruction": next_instruction,
             "graph": graph_manifest,
             "recorded": record["kind"],
             "record": record,
@@ -541,6 +815,7 @@ class ArtifactService:
         normalized_mode = str(mode or "create").strip().lower()
         if normalized_mode not in {"create", "revise"}:
             raise ValueError("submit_idea mode must be `create` or `revise`.")
+        self._require_baseline_gate_open(quest_root, action="submit_idea")
 
         quest_id = self._quest_id(quest_root)
         state = self.quest_service.read_research_state(quest_root)
@@ -656,6 +931,12 @@ class ArtifactService:
             return {
                 "ok": True,
                 "mode": normalized_mode,
+                "guidance": artifact.get("guidance"),
+                "guidance_vm": artifact.get("guidance_vm"),
+                "next_anchor": artifact.get("next_anchor"),
+                "recommended_skill_reads": artifact.get("recommended_skill_reads"),
+                "suggested_artifact_calls": artifact.get("suggested_artifact_calls"),
+                "next_instruction": artifact.get("next_instruction"),
                 "idea_id": resolved_idea_id,
                 "branch": branch_name,
                 "parent_branch": parent_branch,
@@ -771,6 +1052,12 @@ class ArtifactService:
         return {
             "ok": True,
             "mode": normalized_mode,
+            "guidance": artifact.get("guidance"),
+            "guidance_vm": artifact.get("guidance_vm"),
+            "next_anchor": artifact.get("next_anchor"),
+            "recommended_skill_reads": artifact.get("recommended_skill_reads"),
+            "suggested_artifact_calls": artifact.get("suggested_artifact_calls"),
+            "next_instruction": artifact.get("next_instruction"),
             "idea_id": resolved_idea_id,
             "branch": branch_name,
             "worktree_root": str(worktree_root),
@@ -805,6 +1092,7 @@ class ArtifactService:
         baseline_id: str | None = None,
         baseline_variant_id: str | None = None,
     ) -> dict[str, Any]:
+        self._require_baseline_gate_open(quest_root, action="record_main_experiment")
         state = self.quest_service.read_research_state(quest_root)
         if str(state.get("workspace_mode") or "").strip() == "analysis":
             raise ValueError(
@@ -1103,6 +1391,12 @@ class ArtifactService:
         )
         return {
             "ok": True,
+            "guidance": artifact.get("guidance"),
+            "guidance_vm": artifact.get("guidance_vm"),
+            "next_anchor": artifact.get("next_anchor"),
+            "recommended_skill_reads": artifact.get("recommended_skill_reads"),
+            "suggested_artifact_calls": artifact.get("suggested_artifact_calls"),
+            "next_instruction": artifact.get("next_instruction"),
             "run_id": run_identifier,
             "run_md_path": str(run_md_path),
             "result_json_path": str(result_json_path),
@@ -1124,6 +1418,7 @@ class ArtifactService:
         parent_run_id: str | None = None,
         slices: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        self._require_baseline_gate_open(quest_root, action="create_analysis_campaign")
         state = self.quest_service.read_research_state(quest_root)
         active_idea_id = str(state.get("active_idea_id") or "").strip()
         if not active_idea_id:
@@ -1328,6 +1623,12 @@ class ArtifactService:
         )
         return {
             "ok": True,
+            "guidance": artifact.get("guidance"),
+            "guidance_vm": artifact.get("guidance_vm"),
+            "next_anchor": artifact.get("next_anchor"),
+            "recommended_skill_reads": artifact.get("recommended_skill_reads"),
+            "suggested_artifact_calls": artifact.get("suggested_artifact_calls"),
+            "next_instruction": artifact.get("next_instruction"),
             "campaign_id": campaign_id,
             "parent_branch": parent_branch,
             "parent_worktree_root": str(parent_worktree_root),
@@ -1688,6 +1989,20 @@ class ArtifactService:
 
     def attach_baseline(self, quest_root: Path, baseline_id: str, variant_id: str | None = None) -> dict:
         attachment = self.baselines.attach(quest_root, baseline_id, variant_id)
+        materialized = self._materialize_baseline_attachment(quest_root, attachment)
+        materialization = (
+            dict(materialized.get("materialization") or {})
+            if isinstance(materialized.get("materialization"), dict)
+            else {}
+        )
+        materialization_status = str(materialization.get("status") or "").strip().lower()
+        if materialization_status and materialization_status != "ok":
+            return {
+                "ok": False,
+                "attachment": materialized,
+                "message": "Baseline attachment metadata was written, but the baseline source could not be materialized into this quest.",
+                "guidance": "Fix the baseline registry source path or select another baseline before continuing.",
+            }
         artifact = self.record(
             quest_root,
             {
@@ -1698,18 +2013,263 @@ class ArtifactService:
                 "summary": f"Attached baseline `{baseline_id}`.",
                 "reason": "Baseline reuse avoids repeating an already stable reproduction.",
                 "baseline_id": baseline_id,
-                "baseline_variant_id": attachment.get("source_variant_id"),
+                "baseline_variant_id": materialized.get("source_variant_id"),
                 "paths": {
                     "attachment_yaml": str(quest_root / "baselines" / "imported" / baseline_id / "attachment.yaml"),
+                    "baseline_root": str(quest_root / "baselines" / "imported" / baseline_id),
+                    "source_path": str(materialized.get("source_path") or ""),
                 },
                 "source": {"kind": "system", "role": "artifact"},
             },
         )
         return {
             "ok": True,
+            "attachment": materialized,
+            "artifact": artifact,
+            "guidance": "The selected baseline is now attached under baselines/imported. Reuse it before considering a fresh reproduction.",
+        }
+
+    def confirm_baseline(
+        self,
+        quest_root: Path,
+        *,
+        baseline_path: str,
+        comment: str | dict[str, Any] | None = None,
+        baseline_id: str | None = None,
+        variant_id: str | None = None,
+        summary: str | None = None,
+        baseline_kind: str | None = None,
+        metric_contract: dict[str, Any] | None = None,
+        metrics_summary: dict[str, Any] | None = None,
+        primary_metric: dict[str, Any] | None = None,
+        auto_advance: bool = True,
+    ) -> dict[str, Any]:
+        resolved = self._resolve_baseline_path(quest_root, baseline_path, baseline_id=baseline_id)
+        resolved_baseline_id = str(resolved["baseline_id"] or "").strip()
+        if not resolved_baseline_id:
+            raise ValueError("Resolved baseline id is empty.")
+        source_mode = str(resolved["source_mode"])
+        resolved_root = Path(resolved["baseline_root"])
+        resolved_root_rel_path = str(resolved["baseline_root_rel_path"])
+
+        if source_mode == "imported":
+            existing_attachment = self._active_baseline_attachment(quest_root, workspace_root=quest_root)
+            existing_entry = None
+            selected_variant = None
+            if (
+                isinstance(existing_attachment, dict)
+                and str(existing_attachment.get("source_baseline_id") or "").strip() == resolved_baseline_id
+            ):
+                existing_entry = (
+                    dict(existing_attachment.get("entry") or {})
+                    if isinstance(existing_attachment.get("entry"), dict)
+                    else None
+                )
+                selected_variant = (
+                    dict(existing_attachment.get("selected_variant") or {})
+                    if isinstance(existing_attachment.get("selected_variant"), dict)
+                    else None
+                )
+                materialization = (
+                    dict(existing_attachment.get("materialization") or {})
+                    if isinstance(existing_attachment.get("materialization"), dict)
+                    else {}
+                )
+                materialization_status = str(materialization.get("status") or "").strip().lower()
+                if materialization_status and materialization_status != "ok":
+                    raise FileNotFoundError(
+                        "Imported baseline attachment exists, but its baseline files were not materialized successfully."
+                    )
+            if existing_entry is None:
+                registry_entry = self.baselines.get(resolved_baseline_id)
+                existing_entry = dict(registry_entry or {}) if isinstance(registry_entry, dict) else None
+            if existing_entry is None:
+                existing_entry, selected_variant = self._baseline_entry_from_local_state(
+                    quest_root,
+                    baseline_id=resolved_baseline_id,
+                    baseline_root=resolved_root,
+                    variant_id=variant_id,
+                    summary=summary,
+                    baseline_kind=baseline_kind,
+                    metric_contract=metric_contract,
+                    metrics_summary=metrics_summary,
+                    primary_metric=primary_metric,
+                )
+            resolved_variant_id = str(
+                variant_id
+                or (selected_variant or {}).get("variant_id")
+                or existing_entry.get("default_variant_id")
+                or ""
+            ).strip() or None
+            if existing_entry.get("baseline_variants"):
+                selected_variant = next(
+                    (
+                        item
+                        for item in existing_entry.get("baseline_variants", [])
+                        if str(item.get("variant_id") or "").strip() == str(resolved_variant_id or "").strip()
+                    ),
+                    selected_variant,
+                )
+            entry = {
+                **existing_entry,
+                "path": existing_entry.get("path") or str(resolved_root),
+                "summary": summary or existing_entry.get("summary") or "",
+            }
+        else:
+            entry, selected_variant = self._baseline_entry_from_local_state(
+                quest_root,
+                baseline_id=resolved_baseline_id,
+                baseline_root=resolved_root,
+                variant_id=variant_id,
+                summary=summary,
+                baseline_kind=baseline_kind,
+                metric_contract=metric_contract,
+                metrics_summary=metrics_summary,
+                primary_metric=primary_metric,
+            )
+            resolved_variant_id = str(
+                variant_id
+                or (selected_variant or {}).get("variant_id")
+                or entry.get("default_variant_id")
+                or ""
+            ).strip() or None
+
+        attachment = self._write_confirmed_baseline_attachment(
+            quest_root,
+            baseline_id=resolved_baseline_id,
+            variant_id=resolved_variant_id,
+            entry=entry,
+            selected_variant=selected_variant,
+            source_mode=source_mode,
+            baseline_root=resolved_root,
+            comment=comment,
+        )
+
+        summary_text = summary or f"Baseline `{resolved_baseline_id}` confirmed for downstream comparison."
+        reason_text = comment if isinstance(comment, str) and comment.strip() else "Baseline gate confirmed."
+        artifact = self.record(
+            quest_root,
+            {
+                "kind": "baseline",
+                "status": "confirmed",
+                "summary": summary_text,
+                "reason": reason_text,
+                "baseline_id": resolved_baseline_id,
+                "baseline_variant_id": resolved_variant_id,
+                "baseline_kind": entry.get("baseline_kind") or baseline_kind or source_mode,
+                "default_variant_id": entry.get("default_variant_id"),
+                "baseline_variants": entry.get("baseline_variants") or [],
+                "metric_contract": entry.get("metric_contract"),
+                "primary_metric": entry.get("primary_metric"),
+                "metrics_summary": entry.get("metrics_summary") or {},
+                "path": str(resolved_root),
+                "paths": {
+                    "baseline_root": str(resolved_root),
+                    "attachment_yaml": str(quest_root / "baselines" / "imported" / resolved_baseline_id / "attachment.yaml"),
+                },
+                "flow_type": "baseline_gate",
+                "protocol_step": "confirm",
+                "details": {
+                    "baseline_gate": "confirmed",
+                    "baseline_path": str(resolved["resolved_path"]),
+                    "baseline_root_rel_path": resolved_root_rel_path,
+                    "source_mode": source_mode,
+                    "comment": comment,
+                },
+                "source": {"kind": "system", "role": "artifact"},
+            },
+            checkpoint=True,
+        )
+        confirmed_ref = {
+            "baseline_id": resolved_baseline_id,
+            "variant_id": resolved_variant_id,
+            "baseline_path": str(resolved_root),
+            "baseline_root_rel_path": resolved_root_rel_path,
+            "source_mode": source_mode,
+            "confirmed_at": utc_now(),
+            "comment": comment,
+        }
+        quest_state = self.quest_service.update_baseline_state(
+            quest_root,
+            baseline_gate="confirmed",
+            confirmed_baseline_ref=confirmed_ref,
+            active_anchor="idea" if auto_advance else "baseline",
+        )
+        registry_entry = self._sync_confirmed_baseline_registry_entry(
+            quest_root=quest_root,
+            baseline_id=resolved_baseline_id,
+            variant_id=resolved_variant_id,
+            entry=entry,
+            selected_variant=selected_variant,
+            resolved_root=resolved_root,
+            summary=summary_text,
+            source_mode=source_mode,
+        )
+        return {
+            "ok": True,
+            "guidance": artifact.get("guidance"),
+            "guidance_vm": artifact.get("guidance_vm"),
+            "next_anchor": artifact.get("next_anchor"),
+            "recommended_skill_reads": artifact.get("recommended_skill_reads"),
+            "suggested_artifact_calls": artifact.get("suggested_artifact_calls"),
+            "next_instruction": artifact.get("next_instruction"),
+            "baseline_gate": quest_state.get("baseline_gate"),
+            "confirmed_baseline_ref": quest_state.get("confirmed_baseline_ref"),
             "attachment": attachment,
             "artifact": artifact,
-            "guidance": "Reuse the attached baseline metadata and metrics before deciding whether a new reproduction is necessary.",
+            "baseline_registry_entry": registry_entry,
+            "snapshot": self.quest_service.snapshot(self._quest_id(quest_root)),
+            "legacy_guidance": "Baseline gate confirmed. Idea selection is now the default next anchor.",
+        }
+
+    def waive_baseline(
+        self,
+        quest_root: Path,
+        *,
+        reason: str,
+        comment: str | dict[str, Any] | None = None,
+        auto_advance: bool = True,
+    ) -> dict[str, Any]:
+        normalized_reason = str(reason or "").strip()
+        if not normalized_reason:
+            raise ValueError("`reason` is required to waive the baseline gate.")
+        artifact = self.record(
+            quest_root,
+            {
+                "kind": "decision",
+                "status": "completed",
+                "verdict": "waived",
+                "action": "waive_baseline",
+                "reason": normalized_reason,
+                "summary": "Baseline gate waived explicitly for this quest.",
+                "flow_type": "baseline_gate",
+                "protocol_step": "waive",
+                "details": {
+                    "baseline_gate": "waived",
+                    "comment": comment,
+                },
+                "source": {"kind": "system", "role": "artifact"},
+            },
+            checkpoint=True,
+        )
+        quest_state = self.quest_service.update_baseline_state(
+            quest_root,
+            baseline_gate="waived",
+            confirmed_baseline_ref=None,
+            active_anchor="idea" if auto_advance else "baseline",
+        )
+        return {
+            "ok": True,
+            "guidance": artifact.get("guidance"),
+            "guidance_vm": artifact.get("guidance_vm"),
+            "next_anchor": artifact.get("next_anchor"),
+            "recommended_skill_reads": artifact.get("recommended_skill_reads"),
+            "suggested_artifact_calls": artifact.get("suggested_artifact_calls"),
+            "next_instruction": artifact.get("next_instruction"),
+            "baseline_gate": quest_state.get("baseline_gate"),
+            "artifact": artifact,
+            "snapshot": self.quest_service.snapshot(self._quest_id(quest_root)),
+            "legacy_guidance": "Baseline gate waived. Continue carefully and keep the waiver rationale explicit downstream.",
         }
 
     def refresh_summary(self, quest_root: Path, *, reason: str | None = None) -> dict:

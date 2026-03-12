@@ -1,9 +1,10 @@
-import { FolderOpen, Loader2, Search } from 'lucide-react'
+import { FolderOpen, Loader2, Search, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { OverlayDialog } from '@/components/home/OverlayDialog'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
+import { ConfirmModal } from '@/components/ui/modal'
 import { useI18n } from '@/lib/i18n'
 import type { QuestSummary } from '@/types'
 
@@ -30,6 +31,8 @@ export function OpenQuestDialog({
   error,
   onClose,
   onOpenQuest,
+  onDeleteQuest,
+  deletingQuestId,
 }: {
   open: boolean
   quests: QuestSummary[]
@@ -37,13 +40,19 @@ export function OpenQuestDialog({
   error?: string | null
   onClose: () => void
   onOpenQuest: (questId: string) => void
+  onDeleteQuest: (questId: string) => Promise<void> | void
+  deletingQuestId?: string | null
 }) {
   const { locale, t } = useI18n()
   const [search, setSearch] = useState('')
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [confirmQuest, setConfirmQuest] = useState<QuestSummary | null>(null)
 
   useEffect(() => {
     if (!open) {
       setSearch('')
+      setConfirmOpen(false)
+      setConfirmQuest(null)
     }
   }, [open])
 
@@ -108,41 +117,84 @@ export function OpenQuestDialog({
             <div className="space-y-3">
               {filteredQuests.map((quest) => {
                 const pendingCount = quest.pending_decisions?.length ?? quest.counts?.pending_decision_count ?? 0
+                const isDeleting = Boolean(deletingQuestId && deletingQuestId === quest.quest_id)
                 return (
-                  <button
-                    key={quest.quest_id}
-                    type="button"
-                    onClick={() => onOpenQuest(quest.quest_id)}
-                    className="home-card w-full rounded-[28px] px-5 py-4 text-left"
-                  >
-                    <div className="relative z-[1]">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="min-w-0">
-                          <div className="truncate text-base font-semibold tracking-tight">{quest.title || quest.quest_id}</div>
-                          <div className="mt-1 truncate text-sm text-muted-foreground">{quest.summary?.status_line || t('openQuestNoDescription')}</div>
+                  <div key={quest.quest_id} className="group relative">
+                    <button
+                      type="button"
+                      onClick={() => onOpenQuest(quest.quest_id)}
+                      className="home-card w-full rounded-[28px] px-5 py-4 text-left"
+                      disabled={isDeleting}
+                    >
+                      <div className="relative z-[1]">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0">
+                            <div className="truncate text-base font-semibold tracking-tight">
+                              {quest.title || quest.quest_id}
+                            </div>
+                            <div className="mt-1 truncate text-sm text-muted-foreground">
+                              {quest.summary?.status_line || t('openQuestNoDescription')}
+                            </div>
+                          </div>
+                          <div className="shrink-0 text-xs text-muted-foreground">
+                            {t('openQuestUpdated')}: {formatTime(quest.updated_at, locale)}
+                          </div>
                         </div>
-                        <div className="shrink-0 text-xs text-muted-foreground">
-                          {t('openQuestUpdated')}: {formatTime(quest.updated_at, locale)}
+
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Badge>{quest.quest_id}</Badge>
+                          {quest.branch ? <Badge>{t('openQuestBranch')}: {quest.branch}</Badge> : null}
+                          {pendingCount > 0 ? <Badge>{t('openQuestPending')}: {pendingCount}</Badge> : null}
+                        </div>
+
+                        <div className="mt-4 inline-flex rounded-full border border-black/[0.08] bg-white/[0.72] px-3 py-1.5 text-xs font-medium text-[rgba(38,36,33,0.9)] dark:border-black/[0.08] dark:bg-white/[0.78] dark:text-[rgba(38,36,33,0.9)]">
+                          {t('landingOpen')}
                         </div>
                       </div>
+                    </button>
 
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <Badge>{quest.quest_id}</Badge>
-                        {quest.branch ? <Badge>{t('openQuestBranch')}: {quest.branch}</Badge> : null}
-                        {pendingCount > 0 ? <Badge>{t('openQuestPending')}: {pendingCount}</Badge> : null}
-                      </div>
-
-                      <div className="mt-4 inline-flex rounded-full border border-black/[0.08] bg-white/[0.72] px-3 py-1.5 text-xs font-medium text-[rgba(38,36,33,0.9)] dark:border-black/[0.08] dark:bg-white/[0.78] dark:text-[rgba(38,36,33,0.9)]">
-                        {t('landingOpen')}
-                      </div>
-                    </div>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setConfirmQuest(quest)
+                        setConfirmOpen(true)
+                      }}
+                      disabled={isDeleting}
+                      aria-label={t('openQuestDelete')}
+                      title={t('openQuestDelete')}
+                      className="absolute right-4 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-black/10 bg-white/80 text-muted-foreground opacity-0 shadow-sm backdrop-blur-md transition-all group-hover:opacity-100 hover:border-black/20 hover:text-foreground disabled:pointer-events-none disabled:opacity-40 dark:border-white/10 dark:bg-black/30 dark:hover:border-white/20"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
                 )
               })}
             </div>
           )}
         </div>
       </div>
+
+      <ConfirmModal
+        open={confirmOpen}
+        onClose={() => {
+          if (deletingQuestId) return
+          setConfirmOpen(false)
+        }}
+        onConfirm={() => {
+          if (!confirmQuest) return
+          void Promise.resolve(onDeleteQuest(confirmQuest.quest_id)).finally(() => {
+            setConfirmOpen(false)
+            setConfirmQuest(null)
+          })
+        }}
+        loading={Boolean(confirmQuest && deletingQuestId === confirmQuest.quest_id)}
+        title={t('openQuestDeleteTitle')}
+        description={`${t('openQuestDeleteBody')}\n\n${confirmQuest ? `${confirmQuest.title || confirmQuest.quest_id} · ${confirmQuest.quest_id}` : ''}`}
+        confirmText={t('openQuestDeleteConfirm')}
+        cancelText={t('openQuestDeleteCancel')}
+        variant="danger"
+      />
     </OverlayDialog>
   )
 }

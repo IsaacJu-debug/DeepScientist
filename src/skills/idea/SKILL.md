@@ -637,6 +637,13 @@ The idea stage is primarily a planning and reasoning stage.
 
 ## Memory rules
 
+Stage-start requirement:
+
+- begin every idea pass with `memory.list_recent(scope='quest', limit=5)`
+- then run at least one idea-relevant `memory.search(...)` before broad new ideation or literature expansion
+- before proposing a new idea, explicitly review prior quest idea records and experiment outcomes so the new proposal builds on actual history instead of rediscovering old work
+- treat prior idea lines and experiment lines as reference material, not as the active idea contract unless you intentionally select and continue that line
+
 Store reusable reasoning in memory, such as:
 
 - literature survey summaries
@@ -689,12 +696,18 @@ Recommended read timing:
 
 - before any new paper search:
   - run `memory.search(...)` over the baseline, task, dataset, mechanism, and current idea labels
+- before broad new ideation:
+  - review prior quest `ideas`, experiment results, failure patterns, and decision notes in detail
 - before wide literature search:
-  - consult quest `papers`, `ideas`, and `decisions`
+  - consult quest `papers`, `ideas`, experiment lessons, and `decisions`
 - before final selection:
   - re-check quest `ideas`, `decisions`, and `knowledge`
 - after a failed or rejected idea line:
   - check quest and global ideation lessons before proposing the next line
+
+Stage-end requirement:
+
+- if ideation produced a durable survey conclusion, selected-idea rationale, rejected-idea lesson, or novelty caveat, write at least one `memory.write(...)` before leaving the stage
 
 When writing paper memory cards, include enough metadata to avoid redundant search later, such as:
 

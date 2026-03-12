@@ -1046,7 +1046,9 @@ function LabOverviewCanvasInner({
           title: quest.title || 'Quest',
           status: quest.status ?? null,
           piState: quest.pi_state ?? runtime?.piState ?? null,
-          baselineBound: Boolean(quest.baseline_root_id),
+          baselineBound:
+            governanceQuest?.governance.formalBaselineState === 'confirmed' ||
+            quest.governance?.formalBaselineState === 'confirmed',
           hasCliBinding: Boolean(quest.cli_server_id),
           headBranch: governanceQuest?.topology.headBranch ?? quest.git_head_branch ?? null,
           lastEventAt: quest.last_event_at ?? null,

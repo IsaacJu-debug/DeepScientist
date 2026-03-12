@@ -76,6 +76,11 @@ export const client = {
       method: 'POST',
       body: JSON.stringify({ goal }),
     }),
+  deleteQuest: (baseUrl: string, questId: string) =>
+    api<{ ok: boolean; quest_id: string; deleted?: boolean }>(baseUrl, `/api/quests/${questId}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ source: 'tui-ink' }),
+    }),
   connectors: (baseUrl: string) => api<ConnectorSnapshot[]>(baseUrl, '/api/connectors'),
   session: (baseUrl: string, questId: string) => api<SessionPayload>(baseUrl, `/api/quests/${questId}/session`),
   openDocument: (baseUrl: string, questId: string, documentId: string) =>

@@ -23,6 +23,7 @@ export function ProjectsPage() {
   const [projects, setProjects] = useState<QuestSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
+  const [deleting, setDeleting] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [openDialogOpen, setOpenDialogOpen] = useState(false)
@@ -49,7 +50,13 @@ export function ProjectsPage() {
     [projects]
   )
 
-  const createAndOpen = async (payload: { title: string; goal: string; quest_id?: string }) => {
+  const createAndOpen = async (payload: {
+    title: string
+    goal: string
+    quest_id?: string
+    requested_baseline_ref?: { baseline_id: string; variant_id?: string | null } | null
+    startup_contract?: Record<string, unknown> | null
+  }) => {
     if (!payload.goal.trim()) {
       return
     }
@@ -59,6 +66,8 @@ export function ProjectsPage() {
         goal: payload.goal.trim(),
         title: payload.title.trim() || undefined,
         quest_id: payload.quest_id?.trim() || undefined,
+        requested_baseline_ref: payload.requested_baseline_ref ?? undefined,
+        startup_contract: payload.startup_contract ?? undefined,
       })
       setCreateDialogOpen(false)
       navigate(`/projects/${result.snapshot.quest_id}`)
@@ -66,6 +75,20 @@ export function ProjectsPage() {
       setError(caught instanceof Error ? caught.message : t('createFailed'))
     } finally {
       setCreating(false)
+    }
+  }
+
+  const deleteQuest = async (questId: string) => {
+    if (!questId.trim()) return
+    setDeleting(questId)
+    try {
+      await client.deleteQuest(questId)
+      setProjects((current) => current.filter((item) => item.quest_id !== questId))
+      setError(null)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : t('deleteFailed'))
+    } finally {
+      setDeleting(null)
     }
   }
 
@@ -100,6 +123,8 @@ export function ProjectsPage() {
         error={error}
         onClose={() => setOpenDialogOpen(false)}
         onOpenQuest={(questId) => navigate(`/projects/${questId}`)}
+        onDeleteQuest={deleteQuest}
+        deletingQuestId={deleting}
       />
     </div>
   )

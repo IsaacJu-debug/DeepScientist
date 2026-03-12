@@ -53,6 +53,13 @@ export interface FileNode {
 
   /** Whether this node is soft-deleted */
   isDeleted?: boolean;
+
+  /** Optional workspace-only decoration metadata */
+  uiMeta?: {
+    emphasis?: "diff" | "scope-root";
+    diffStatus?: string | null;
+    badge?: string | null;
+  } | null;
 }
 
 /**

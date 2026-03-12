@@ -507,6 +507,12 @@ If a critical packaging issue remains, mark the stage as blocked or warn explici
 
 ## Memory rules
 
+Stage-start requirement:
+
+- begin every writing pass with `memory.list_recent(scope='quest', limit=5)`
+- then run at least one write-relevant `memory.search(...)` before drafting, major revision, or claim restructuring
+- if several idea or experiment lines exist, narrow retrieval to the line actually supporting the current draft and do not mix evidence memory from another line unless you are explicitly comparing claims
+
 Use memory for reusable lessons only, such as:
 
 - citation pitfalls
@@ -559,6 +565,10 @@ Write quest memory when:
 - a citation or evidence mistake is likely to recur later in the quest
 - a review lesson should shape the next revision
 - a claim boundary or package constraint should not be rediscovered
+
+Stage-end requirement:
+
+- if writing produced a durable citation lesson, review lesson, claim-boundary rule, or packaging constraint, write at least one `memory.write(...)` before leaving the stage
 
 Promote to global memory only when the lesson is clearly reusable beyond this quest.
 

@@ -38,7 +38,16 @@ QUEST_DIRECTORIES = (
 )
 
 
-def initial_quest_yaml(quest_id: str, goal: str, quest_root: Path, runner: str, title: str | None = None) -> dict:
+def initial_quest_yaml(
+    quest_id: str,
+    goal: str,
+    quest_root: Path,
+    runner: str,
+    title: str | None = None,
+    *,
+    requested_baseline_ref: dict | None = None,
+    startup_contract: dict | None = None,
+) -> dict:
     timestamp = utc_now()
     return {
         "quest_id": quest_id,
@@ -46,6 +55,10 @@ def initial_quest_yaml(quest_id: str, goal: str, quest_root: Path, runner: str, 
         "quest_root": str(quest_root.resolve()),
         "status": "active",
         "active_anchor": "baseline",
+        "baseline_gate": "pending",
+        "confirmed_baseline_ref": None,
+        "requested_baseline_ref": requested_baseline_ref,
+        "startup_contract": startup_contract,
         "default_runner": runner,
         "created_at": timestamp,
         "updated_at": timestamp,

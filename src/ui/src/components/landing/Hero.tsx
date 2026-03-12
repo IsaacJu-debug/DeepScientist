@@ -49,6 +49,7 @@ export default function Hero() {
   const [questDialogOpen, setQuestDialogOpen] = useState(false)
   const [quests, setQuests] = useState<QuestSummary[]>([])
   const [questsLoading, setQuestsLoading] = useState(false)
+  const [deletingQuestId, setDeletingQuestId] = useState<string | null>(null)
   const [questError, setQuestError] = useState<string | null>(null)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -263,7 +264,13 @@ export default function Hero() {
     }
   }, [questDialogOpen])
 
-  const createAndOpen = async (payload: { title: string; goal: string; quest_id?: string }) => {
+  const createAndOpen = async (payload: {
+    title: string
+    goal: string
+    quest_id?: string
+    requested_baseline_ref?: { baseline_id: string; variant_id?: string | null } | null
+    startup_contract?: Record<string, unknown> | null
+  }) => {
     if (!payload.goal.trim()) {
       return
     }
@@ -275,6 +282,8 @@ export default function Hero() {
         goal: payload.goal.trim(),
         title: payload.title.trim() || undefined,
         quest_id: payload.quest_id?.trim() || undefined,
+        requested_baseline_ref: payload.requested_baseline_ref ?? undefined,
+        startup_contract: payload.startup_contract ?? undefined,
       })
       setCreateDialogOpen(false)
       navigate(`/projects/${result.snapshot.quest_id}`)
@@ -282,6 +291,21 @@ export default function Hero() {
       setCreateError(caught instanceof Error ? caught.message : 'Failed to create quest.')
     } finally {
       setCreating(false)
+    }
+  }
+
+  const deleteQuest = async (questId: string) => {
+    const trimmed = questId.trim()
+    if (!trimmed) return
+    setDeletingQuestId(trimmed)
+    try {
+      await client.deleteQuest(trimmed)
+      setQuests((current) => current.filter((item) => item.quest_id !== trimmed))
+      setQuestError(null)
+    } catch (caught) {
+      setQuestError(caught instanceof Error ? caught.message : 'Failed to delete quest.')
+    } finally {
+      setDeletingQuestId(null)
     }
   }
 
@@ -421,6 +445,8 @@ export default function Hero() {
           setQuestDialogOpen(false)
           navigate(`/projects/${questId}`)
         }}
+        onDeleteQuest={deleteQuest}
+        deletingQuestId={deletingQuestId}
       />
     </>
   )

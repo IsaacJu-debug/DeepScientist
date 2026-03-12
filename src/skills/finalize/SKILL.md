@@ -217,6 +217,12 @@ Weak finalization:
 
 ## Memory rules
 
+Stage-start requirement:
+
+- begin every finalize pass with `memory.list_recent(scope='quest', limit=5)`
+- then run at least one finalize-relevant `memory.search(...)` before closure writing
+- if several idea, run, or campaign lines exist, retrieve only the memory tied to the line being finalized unless the final report is explicitly comparing lines
+
 Finalize should read memory before writing closure, especially:
 
 - quest `decisions`
@@ -235,6 +241,10 @@ Write to memory only when the lesson is reusable across quests, such as:
 - general methodological pitfalls
 - robust baseline lessons
 - durable writing or evaluation lessons
+
+Stage-end requirement:
+
+- if finalize produced a durable cross-quest lesson worth reusing later, write at least one `memory.write(...)` before leaving the stage
 
 Quest-specific closure state belongs in files and artifacts first, not only memory.
 

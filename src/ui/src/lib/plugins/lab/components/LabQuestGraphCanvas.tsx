@@ -110,11 +110,16 @@ type QuestNodeData = {
   isAgent?: boolean
   agentInstanceId?: string | null
   isRoot?: boolean
+  isPlaceholder?: boolean
   stageLabel?: string | null
   nowDoing?: string | null
   decisionReason?: string | null
   evidenceStatus?: string | null
   branchClass?: string | null
+  nodeKind?: string | null
+  scopePaths?: string[] | null
+  compareBase?: string | null
+  compareHead?: string | null
   worktreeRelPath?: string | null
   memoryLabel?: string | null
   memorySummary?: string | null
@@ -130,6 +135,7 @@ type QuestNodeData = {
   submissionState?: string | null
   retireState?: string | null
   claimEvidenceState?: string | null
+  baselineGate?: string | null
 }
 
 type AgentNodeData = {
@@ -202,6 +208,13 @@ const BRANCH_LANE_HEIGHT = 260
 const BRANCH_LANE_ORDER = ['main', 'idea', 'analysis', 'paper', 'other'] as const
 
 const resolveBranchLaneKey = (node: LabQuestGraphNode): (typeof BRANCH_LANE_ORDER)[number] => {
+  if (node.node_kind === 'baseline_root') return 'main'
+  if (node.node_kind === 'placeholder') {
+    const stageKey = String(node.stage_key || '').trim().toLowerCase()
+    if (stageKey === 'idea') return 'idea'
+    if (stageKey === 'analysis-campaign') return 'analysis'
+    if (stageKey === 'write') return 'paper'
+  }
   const branchClass = String(node.branch_class || '').trim().toLowerCase()
   if (branchClass === 'main' || node.branch_name === 'main') return 'main'
   if (branchClass === 'idea') return 'idea'
@@ -819,6 +832,11 @@ const buildSelectionContext = (
     traceNodeId?: string | null
     label?: string | null
     summary?: string | null
+    compareBase?: string | null
+    compareHead?: string | null
+    scopePaths?: string[] | null
+    nodeKind?: string | null
+    baselineGate?: string | null
   }
 ): LabQuestSelectionContext & { label?: string | null; summary?: string | null } => ({
   selection_type: payload.selectionType,
@@ -830,6 +848,11 @@ const buildSelectionContext = (
   agent_instance_id: payload.agentInstanceId ?? null,
   worktree_rel_path: payload.worktreeRelPath ?? null,
   trace_node_id: payload.traceNodeId ?? null,
+  compare_base: payload.compareBase ?? null,
+  compare_head: payload.compareHead ?? null,
+  scope_paths: payload.scopePaths ?? null,
+  node_kind: payload.nodeKind ?? null,
+  baseline_gate: payload.baselineGate ?? null,
   label: payload.label ?? null,
   summary: payload.summary ?? null,
 })
@@ -1387,6 +1410,8 @@ const QuestGraphNode = ({ data }: NodeProps) => {
     ? formatStateLabel(nodeData.decisionType)
     : nodeData.isEvent
       ? t('quest_semantic_node_event_label', undefined, 'Event / stage marker')
+      : nodeData.isPlaceholder
+        ? t('quest_semantic_node_placeholder_label', undefined, 'Next step placeholder')
       : nodeData.isRoot
         ? t('quest_hover_badge_baseline', undefined, 'Baseline')
         : t('quest_semantic_node_branch_label', undefined, 'Branch / worktree route')
@@ -1400,6 +1425,8 @@ const QuestGraphNode = ({ data }: NodeProps) => {
         nodeData.isHead && 'is-head',
         nodeData.isSelected && 'is-selected',
         nodeData.isEvent && 'is-event',
+        nodeData.isPlaceholder && 'is-placeholder',
+        nodeData.baselineGate === 'waived' && 'is-waived',
         positive && 'is-positive',
         nodeData.decisionType && 'is-decision',
         nodeData.decisionType ? `decision-${nodeData.decisionType}` : null
@@ -1550,7 +1577,11 @@ const buildDagreLayout = (
 }
 
 const buildBranchLayout = (nodes: LabQuestGraphNode[], edges: LabQuestGraphEdge[]) => {
-  const positions = buildDagreLayout(nodes, edges, { rankdir: 'LR', nodesep: 80, ranksep: 130 })
+  const positions = buildDagreLayout(nodes, edges, {
+    rankdir: 'LR',
+    nodesep: nodes.length > 24 ? 56 : 80,
+    ranksep: nodes.length > 80 ? 110 : 130,
+  })
   if (nodes.length === 0) return positions
   const laneMinY = new Map<(typeof BRANCH_LANE_ORDER)[number], number>()
   nodes.forEach((node) => {
@@ -1569,6 +1600,30 @@ const buildBranchLayout = (nodes: LabQuestGraphNode[], edges: LabQuestGraphEdge[
       y: position.y - laneBaseY + laneIndex * BRANCH_LANE_HEIGHT,
     }
   })
+  if (nodes.length > 24) {
+    const wrapEvery = nodes.length > 80 ? 6 : 8
+    const laneRowGap = DAGRE_NODE_HEIGHT + 44
+    const laneGroups = new Map<(typeof BRANCH_LANE_ORDER)[number], LabQuestGraphNode[]>()
+    nodes.forEach((node) => {
+      const lane = resolveBranchLaneKey(node)
+      laneGroups.set(lane, [...(laneGroups.get(lane) || []), node])
+    })
+    laneGroups.forEach((laneNodes, lane) => {
+      const ordered = [...laneNodes].sort(
+        (left, right) => (positions[left.node_id]?.x ?? 0) - (positions[right.node_id]?.x ?? 0)
+      )
+      ordered.forEach((node, index) => {
+        const current = positions[node.node_id] ?? { x: 0, y: 0 }
+        const row = Math.floor(index / wrapEvery)
+        const col = index % wrapEvery
+        const laneIndex = BRANCH_LANE_ORDER.indexOf(lane)
+        positions[node.node_id] = {
+          x: col * (DAGRE_NODE_WIDTH + 78),
+          y: laneIndex * BRANCH_LANE_HEIGHT + row * laneRowGap,
+        }
+      })
+    })
+  }
   return positions
 }
 
@@ -1772,7 +1827,11 @@ const areNodesEquivalent = (prev: QuestFlowNode[], next: QuestFlowNode[]) => {
     if ((a.decisionReason ?? null) !== (b.decisionReason ?? null)) return false
     if ((a.evidenceStatus ?? null) !== (b.evidenceStatus ?? null)) return false
     if ((a.branchClass ?? null) !== (b.branchClass ?? null)) return false
+    if ((a.nodeKind ?? null) !== (b.nodeKind ?? null)) return false
+    if ((a.compareBase ?? null) !== (b.compareBase ?? null)) return false
+    if ((a.compareHead ?? null) !== (b.compareHead ?? null)) return false
     if ((a.worktreeRelPath ?? null) !== (b.worktreeRelPath ?? null)) return false
+    if ((a.baselineGate ?? null) !== (b.baselineGate ?? null)) return false
     if ((a.baselineState ?? null) !== (b.baselineState ?? null)) return false
     if ((a.pushState ?? null) !== (b.pushState ?? null)) return false
     if ((a.writerState ?? null) !== (b.writerState ?? null)) return false
@@ -1787,10 +1846,12 @@ const areNodesEquivalent = (prev: QuestFlowNode[], next: QuestFlowNode[]) => {
     if (Boolean(a.isHead) !== Boolean(b.isHead)) return false
     if (Boolean(a.isSelected) !== Boolean(b.isSelected)) return false
     if (Boolean(a.isEvent) !== Boolean(b.isEvent)) return false
+    if (Boolean(a.isPlaceholder) !== Boolean(b.isPlaceholder)) return false
     if ((a.branchName ?? null) !== (b.branchName ?? null)) return false
     if ((a.decisionType ?? null) !== (b.decisionType ?? null)) return false
     if ((a.decisionTarget ?? null) !== (b.decisionTarget ?? null)) return false
     if (!shallowArrayEqual(a.trend as unknown[] | null, b.trend as unknown[] | null)) return false
+    if (!shallowArrayEqual(a.scopePaths as unknown[] | null, b.scopePaths as unknown[] | null)) return false
   }
   return true
 }
@@ -2490,6 +2551,7 @@ function LabQuestGraphCanvasInner({
 
     const branchNames = new Set<string>()
     branchNodesFiltered.forEach((node) => {
+      if (node.node_kind === 'baseline_root' || node.node_kind === 'placeholder') return
       if (node.branch_name) {
         branchNames.add(node.branch_name)
       }
@@ -2501,6 +2563,7 @@ function LabQuestGraphCanvasInner({
 
     const branchNodeMap = new Map<string, LabQuestGraphNode>()
     branchNodesFiltered.forEach((node) => {
+      if (node.node_kind === 'baseline_root' || node.node_kind === 'placeholder') return
       if (!node.branch_name) return
       if (!branchNodeMap.has(node.branch_name)) {
         branchNodeMap.set(node.branch_name, node)
@@ -2832,13 +2895,15 @@ function LabQuestGraphCanvasInner({
           viewMode === 'branch' && node.branch_name ? branchInsights.get(node.branch_name) : null
         const branchMemory =
           viewMode === 'branch' && node.branch_name ? memoryByBranch.get(node.branch_name) : null
+        const isPlaceholder = Boolean(node.placeholder || node.node_kind === 'placeholder')
+        const isBaselineRoot = node.node_kind === 'baseline_root'
         const label = isStage
           ? node.stage_title || node.stage_key || node.branch_name || 'stage'
           : viewMode === 'event'
             ? isDecision
               ? `DECISION: ${decisionValue || 'recorded'}`
               : node.target_label || node.stage_title || node.status || node.branch_name || 'event'
-            : node.branch_name
+            : node.target_label || node.branch_name
         const subtitle = isStage
           ? typeof node.event_count === 'number'
             ? `${node.event_count} event${node.event_count === 1 ? '' : 's'}`
@@ -2851,10 +2916,16 @@ function LabQuestGraphCanvasInner({
                   ? clampCanvasText(String(decisionPayload.justification), 80)
                   : node.branch_name
               : node.stage_title || node.branch_name
-            : branchInsight?.stageLabel || node.idea_id || 'Idea'
+            : isBaselineRoot
+              ? node.status || null
+              : isPlaceholder
+                ? t('quest_graph_next_step_placeholder', undefined, 'Next step')
+                : branchInsight?.stageLabel || node.idea_id || 'Idea'
         const nodeStatus =
           viewMode === 'branch'
-            ? branchInsight?.updatedAt
+            ? isPlaceholder
+              ? t('quest_process_status_pending', undefined, 'Pending')
+              : branchInsight?.updatedAt
               ? `Updated ${formatRelativeTime(branchInsight.updatedAt)}`
               : node.status
             : node.status
@@ -2880,7 +2951,8 @@ function LabQuestGraphCanvasInner({
             deltaLabel,
             trend,
             isHead: viewMode === 'branch' && Boolean(headBranch && node.branch_name === headBranch),
-            isRoot: viewMode === 'branch' && node.branch_name === 'main',
+            isRoot: viewMode === 'branch' && isBaselineRoot,
+            isPlaceholder: viewMode === 'branch' && isPlaceholder,
             isSelected,
             isEvent: viewMode === 'event',
             branchName: node.branch_name,
@@ -2893,15 +2965,30 @@ function LabQuestGraphCanvasInner({
             stageLabel: branchInsight?.stageLabel ?? null,
             nowDoing: viewMode === 'branch' ? branchInsight?.nowDoing ?? fallbackSummary : null,
             decisionReason: viewMode === 'branch' ? branchInsight?.decisionReason ?? null : null,
-            evidenceStatus: viewMode === 'branch' ? branchInsight?.evidenceStatus ?? null : null,
+            evidenceStatus:
+              viewMode === 'branch'
+                ? branchInsight?.evidenceStatus ??
+                  clampCanvasText(node.node_summary?.last_reply, 96) ??
+                  null
+                : null,
             branchClass: node.branch_class ?? null,
+            nodeKind: node.node_kind ?? 'branch',
+            scopePaths: node.scope_paths ?? null,
+            compareBase: node.compare_base ?? null,
+            compareHead: node.compare_head ?? null,
             worktreeRelPath: node.worktree_rel_path ?? null,
             memoryLabel:
-              viewMode === 'branch' && branchMemory
+              viewMode === 'branch' && !isPlaceholder && !isBaselineRoot && branchMemory
                 ? `${branchMemory.count} memory ${branchMemory.count === 1 ? 'note' : 'notes'}`
                 : null,
-            memorySummary: viewMode === 'branch' ? branchMemory?.latestSummary ?? null : null,
-            memoryCount: viewMode === 'branch' ? branchMemory?.count ?? null : null,
+            memorySummary:
+              viewMode === 'branch' && !isPlaceholder && !isBaselineRoot
+                ? branchMemory?.latestSummary ?? null
+                : null,
+            memoryCount:
+              viewMode === 'branch' && !isPlaceholder && !isBaselineRoot
+                ? branchMemory?.count ?? null
+                : null,
             baselineState: node.baseline_state ?? null,
             pushState: node.push_state ?? null,
             writerState: node.writer_state ?? null,
@@ -2913,6 +3000,7 @@ function LabQuestGraphCanvasInner({
             submissionState: node.submission_state ?? null,
             retireState: node.retire_state ?? null,
             claimEvidenceState: node.claim_evidence_state ?? null,
+            baselineGate: node.baseline_state ?? null,
           },
           draggable: !interactionLocked,
         }
@@ -3232,7 +3320,9 @@ function LabQuestGraphCanvasInner({
   }, [flow, highlightBranch, highlightNodeId, nodes])
 
   const sortedBranches = React.useMemo(() => {
-    return [...branchNodes].sort((left, right) => {
+    return branchNodes
+      .filter((node) => node.node_kind !== 'baseline_root' && node.node_kind !== 'placeholder')
+      .sort((left, right) => {
       const leftName = String(left.branch_name || '')
       const rightName = String(right.branch_name || '')
       if (headBranch && leftName === headBranch && rightName !== headBranch) return -1
@@ -3642,29 +3732,47 @@ function LabQuestGraphCanvasInner({
             selectionRef: node.id,
             branchName: stageData.branchName ?? null,
             stageKey: stageData.stageKey ?? null,
+            worktreeRelPath: stageData.worktreeRelPath ?? null,
             traceNodeId: node.id,
             label: stageData.stageTitle || stageData.label,
             summary: stageData.summary ?? null,
+            compareBase: stageData.compareBase ?? null,
+            compareHead: stageData.compareHead ?? null,
+            scopePaths: stageData.scopePaths ?? null,
+            nodeKind: stageData.nodeKind ?? null,
+            baselineGate: stageData.baselineGate ?? null,
           })
         )
         return
       }
       const questData = data as QuestNodeData
+      const selectionType =
+        questData.nodeKind === 'baseline_root'
+          ? 'baseline_node'
+          : questData.nodeKind === 'placeholder'
+            ? 'workflow_placeholder'
+            : 'branch_node'
       if (questData.branchName) {
         applySelection(
           buildSelectionContext(questId, {
-            selectionType: 'branch_node',
-            selectionRef: questData.branchName,
+            selectionType,
+            selectionRef:
+              selectionType === 'branch_node' ? questData.branchName : node.id,
             branchName: questData.branchName,
             stageKey: questData.stageKey ?? null,
             worktreeRelPath: questData.worktreeRelPath ?? null,
             traceNodeId: node.id,
             label: questData.label,
             summary: questData.summary ?? questData.nowDoing ?? null,
+            compareBase: questData.compareBase ?? null,
+            compareHead: questData.compareHead ?? null,
+            scopePaths: questData.scopePaths ?? null,
+            nodeKind: questData.nodeKind ?? null,
+            baselineGate: questData.baselineGate ?? null,
           })
         )
       }
-      if (questData.branchName && onBranchSelect) {
+      if (selectionType === 'branch_node' && questData.branchName && onBranchSelect) {
         onBranchSelect(questData.branchName as string)
       }
     },
@@ -3730,12 +3838,24 @@ function LabQuestGraphCanvasInner({
     }
   }, [interactionLocked, layoutJson, layoutMutation, layoutOverride, viewMode])
 
-  const baselineReady = React.useMemo(() => {
-    if (metricCatalog.length > 0) return true
-    const events = branchInsightEventsQuery.data?.items ?? []
-    return events.some((event) => isBaselineEvent(event))
-  }, [branchInsightEventsQuery.data?.items, metricCatalog.length])
-  const selectedBranchName = activeBranch || headBranch || sortedBranches[0]?.branch_name || null
+  const baselineGateState = React.useMemo(() => {
+    const fromGovernance = String(graphQuery.data?.governance_vm?.governance?.formalBaselineState || '').trim().toLowerCase()
+    if (fromGovernance === 'confirmed' || fromGovernance === 'waived' || fromGovernance === 'pending') {
+      return fromGovernance
+    }
+    const baselineNode = branchNodes.find((node) => node.node_kind === 'baseline_root')
+    const fromNode = String(baselineNode?.baseline_state || '').trim().toLowerCase()
+    if (fromNode === 'confirmed' || fromNode === 'waived' || fromNode === 'pending') {
+      return fromNode
+    }
+    return 'pending'
+  }, [branchNodes, graphQuery.data?.governance_vm?.governance?.formalBaselineState])
+  const baselineReady = baselineGateState === 'confirmed' || baselineGateState === 'waived'
+  const selectedBranchName =
+    activeBranch ||
+    headBranch ||
+    sortedBranches.find((node) => node.node_kind !== 'baseline_root' && node.node_kind !== 'placeholder')?.branch_name ||
+    null
   const selectedBranchInsight = selectedBranchName ? branchInsights.get(selectedBranchName) ?? null : null
   const selectedBranchHasDecision = React.useMemo(() => {
     const targetBranch = selectedBranchName || 'main'
@@ -3755,7 +3875,7 @@ function LabQuestGraphCanvasInner({
       const targetRank = resolveStageRank(target)
       if (stageRank > targetRank) return 'done'
       if (stageRank === targetRank) return 'active'
-      if (dependsOnReady && baselineReady) return 'active'
+      if (dependsOnReady && baselineReady) return 'pending'
       return 'pending'
     }
     const finalizeStatus: PipelineStepStatus =
@@ -3770,12 +3890,19 @@ function LabQuestGraphCanvasInner({
     return [
       {
         key: 'baseline',
-        status: baselineReady ? (stageRank > resolveStageRank('baseline') ? 'done' : 'active') : 'active',
+        status:
+          baselineGateState === 'pending'
+            ? 'active'
+            : stageRank > resolveStageRank('baseline')
+              ? 'done'
+              : 'active',
         label: t('quest_process_step_baseline', undefined, 'Baseline'),
         description: t(
           'quest_process_step_baseline_desc',
           undefined,
-          'Bind baseline and define metric objectives.'
+          baselineGateState === 'waived'
+            ? 'Baseline was explicitly waived for this route.'
+            : 'Bind baseline, define metric objectives, and confirm the gate.'
         ),
       },
       {
@@ -3834,7 +3961,7 @@ function LabQuestGraphCanvasInner({
       label: string
       description: string
     }>
-  }, [baselineReady, selectedBranchHasDecision, selectedBranchInsight, t])
+  }, [baselineGateState, baselineReady, selectedBranchHasDecision, selectedBranchInsight, t])
   const selectedBranchNode = selectedBranchName
     ? sortedBranches.find((node) => node.branch_name === selectedBranchName) || null
     : null

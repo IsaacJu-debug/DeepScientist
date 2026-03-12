@@ -10,9 +10,29 @@ from deepscientist.artifact import ArtifactService
 from deepscientist.config import ConfigManager
 from deepscientist.home import ensure_home_layout, repo_root
 from deepscientist.memory import MemoryService
+from deepscientist.memory.frontmatter import dump_markdown_document, load_markdown_document
 from deepscientist.quest import QuestService
-from deepscientist.shared import read_json, read_jsonl, write_json, write_yaml
+from deepscientist.registries import BaselineRegistry
+from deepscientist.shared import read_json, read_jsonl, read_yaml, write_json, write_yaml
 from deepscientist.skills import SkillInstaller
+
+
+def _confirm_local_baseline(artifact: ArtifactService, quest_root: Path, baseline_id: str = "baseline-local") -> dict:
+    baseline_root = quest_root / "baselines" / "local" / baseline_id
+    baseline_root.mkdir(parents=True, exist_ok=True)
+    (baseline_root / "README.md").write_text("# Baseline\n", encoding="utf-8")
+    return artifact.confirm_baseline(
+        quest_root,
+        baseline_path=str(baseline_root),
+        baseline_id=baseline_id,
+        summary=f"Confirmed {baseline_id}",
+        metrics_summary={"acc": 0.8},
+        primary_metric={"name": "acc", "value": 0.8},
+        metric_contract={
+            "primary_metric_id": "acc",
+            "metrics": [{"metric_id": "acc", "direction": "higher"}],
+        },
+    )
 
 
 class _FakeHeaders:
@@ -72,6 +92,54 @@ def test_memory_documents_and_promotion(temp_home: Path) -> None:
     assert skill_opened["writable"] is False
 
 
+def test_memory_list_recent_and_search_prefer_latest_updates(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    quest_service = QuestService(temp_home, skill_installer=SkillInstaller(repo_root(), temp_home))
+    quest = quest_service.create("memory ordering quest")
+    quest_root = Path(quest["quest_root"])
+    memory = MemoryService(temp_home)
+
+    older = memory.write_card(
+        scope="quest",
+        kind="knowledge",
+        title="Older lesson",
+        body="adapter metric contract",
+        quest_root=quest_root,
+        quest_id=quest["quest_id"],
+    )
+    newer = memory.write_card(
+        scope="quest",
+        kind="knowledge",
+        title="Newer lesson",
+        body="adapter metric contract with better evidence",
+        quest_root=quest_root,
+        quest_id=quest["quest_id"],
+    )
+
+    for card, updated_at in (
+        (older, "2026-03-11T10:00:00+00:00"),
+        (newer, "2026-03-11T11:00:00+00:00"),
+    ):
+        path = Path(card["path"])
+        metadata, body = load_markdown_document(path)
+        metadata["created_at"] = updated_at
+        metadata["updated_at"] = updated_at
+        path.write_text(dump_markdown_document(metadata, body), encoding="utf-8")
+
+    recent = memory.list_recent(scope="quest", quest_root=quest_root, kind="knowledge", limit=2)
+    assert [item["title"] for item in recent] == [newer["title"], older["title"]]
+
+    search = memory.search(
+        "adapter metric contract",
+        scope="quest",
+        quest_root=quest_root,
+        kind="knowledge",
+        limit=2,
+    )
+    assert [item["title"] for item in search] == [newer["title"], older["title"]]
+
+
 def test_artifact_interact_and_prepare_branch(temp_home: Path) -> None:
     ensure_home_layout(temp_home)
     ConfigManager(temp_home).ensure_files()
@@ -110,6 +178,7 @@ def test_artifact_managed_git_flow_updates_research_state_and_mirrors_analysis(t
     quest = quest_service.create("artifact flow quest")
     quest_root = Path(quest["quest_root"])
     artifact = ArtifactService(temp_home)
+    _confirm_local_baseline(artifact, quest_root)
 
     created = artifact.submit_idea(
         quest_root,
@@ -126,6 +195,10 @@ def test_artifact_managed_git_flow_updates_research_state_and_mirrors_analysis(t
     assert created["branch"].startswith(f"idea/{quest['quest_id']}-")
     assert idea_worktree.exists()
     assert idea_md_path.exists()
+    assert created["guidance"]
+    assert created["recommended_skill_reads"] == ["decision"]
+    assert created["suggested_artifact_calls"]
+    assert created["next_instruction"]
 
     revised = artifact.submit_idea(
         quest_root,
@@ -140,6 +213,10 @@ def test_artifact_managed_git_flow_updates_research_state_and_mirrors_analysis(t
     )
     assert revised["worktree_root"] == created["worktree_root"]
     assert "Adapter route v2" in idea_md_path.read_text(encoding="utf-8")
+    assert revised["guidance"]
+    assert revised["recommended_skill_reads"] == ["decision"]
+    assert revised["suggested_artifact_calls"]
+    assert revised["next_instruction"]
 
     campaign = artifact.create_analysis_campaign(
         quest_root,
@@ -165,6 +242,10 @@ def test_artifact_managed_git_flow_updates_research_state_and_mirrors_analysis(t
     assert campaign["ok"] is True
     assert campaign["campaign_id"]
     assert len(campaign["slices"]) == 2
+    assert campaign["guidance"]
+    assert campaign["recommended_skill_reads"]
+    assert campaign["suggested_artifact_calls"]
+    assert campaign["next_instruction"]
     first_slice = campaign["slices"][0]
     second_slice = campaign["slices"][1]
     assert Path(first_slice["worktree_root"]).exists()
@@ -228,6 +309,9 @@ def test_record_main_experiment_writes_result_and_baseline_comparison(temp_home:
     quest = quest_service.create("main experiment result quest")
     quest_root = Path(quest["quest_root"])
     artifact = ArtifactService(temp_home)
+    baseline_root = quest_root / "baselines" / "local" / "baseline-main"
+    baseline_root.mkdir(parents=True, exist_ok=True)
+    (baseline_root / "README.md").write_text("# Main baseline\n", encoding="utf-8")
 
     artifact.record(
         quest_root,
@@ -245,6 +329,13 @@ def test_record_main_experiment_writes_result_and_baseline_comparison(temp_home:
         },
     )
     artifact.attach_baseline(quest_root, "baseline-main", "main")
+    artifact.confirm_baseline(
+        quest_root,
+        baseline_path="baselines/imported/baseline-main",
+        baseline_id="baseline-main",
+        variant_id="main",
+        summary="Baseline main confirmed",
+    )
 
     idea = artifact.submit_idea(
         quest_root,
@@ -278,6 +369,10 @@ def test_record_main_experiment_writes_result_and_baseline_comparison(temp_home:
     )
 
     assert result["ok"] is True
+    assert result["guidance"]
+    assert result["recommended_skill_reads"] == ["decision"]
+    assert result["suggested_artifact_calls"]
+    assert result["next_instruction"]
     run_md = Path(result["run_md_path"])
     result_json = Path(result["result_json_path"])
     assert run_md.exists()
@@ -296,6 +391,66 @@ def test_record_main_experiment_writes_result_and_baseline_comparison(temp_home:
     snapshot = quest_service.snapshot(quest["quest_id"])
     assert snapshot["summary"]["latest_metric"]["key"] == "acc"
     assert snapshot["summary"]["latest_metric"]["delta_vs_baseline"] == pytest.approx(0.05)
+
+
+def test_attach_baseline_fails_when_registry_source_is_not_materializable(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    quest_service = QuestService(temp_home, skill_installer=SkillInstaller(repo_root(), temp_home))
+    quest = quest_service.create("broken baseline attach quest")
+    quest_root = Path(quest["quest_root"])
+    artifact = ArtifactService(temp_home)
+
+    artifact.baselines.publish(
+        {
+            "baseline_id": "broken-baseline",
+            "summary": "Broken baseline entry",
+            "path": str(temp_home / "missing-baseline-root"),
+        }
+    )
+
+    result = artifact.attach_baseline(quest_root, "broken-baseline")
+
+    assert result["ok"] is False
+    assert "could not be materialized" in str(result["message"])
+    attachment = read_yaml(quest_root / "baselines" / "imported" / "broken-baseline" / "attachment.yaml", {})
+    assert attachment["materialization"]["status"] == "error"
+    assert list((quest_root / "artifacts" / "reports").glob("*.json")) == []
+
+
+def test_baseline_registry_backfills_confirmed_legacy_quests(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    quest_service = QuestService(temp_home, skill_installer=SkillInstaller(repo_root(), temp_home))
+    quest = quest_service.create("legacy confirmed baseline quest")
+    quest_root = Path(quest["quest_root"])
+    baseline_root = quest_root / "baselines" / "local" / "legacy-baseline"
+    baseline_root.mkdir(parents=True, exist_ok=True)
+    (baseline_root / "README.md").write_text("# Legacy baseline\n", encoding="utf-8")
+
+    quest_service.update_baseline_state(
+        quest_root,
+        baseline_gate="confirmed",
+        confirmed_baseline_ref={
+            "baseline_id": "legacy-baseline",
+            "variant_id": None,
+            "baseline_path": str(baseline_root),
+            "baseline_root_rel_path": "baselines/local/legacy-baseline",
+            "source_mode": "local",
+            "confirmed_at": "2026-03-12T00:00:00Z",
+        },
+        active_anchor="idea",
+    )
+
+    registry = BaselineRegistry(temp_home)
+    entries = registry.list_entries()
+    entry = next(item for item in entries if item["baseline_id"] == "legacy-baseline")
+
+    assert entry["status"] == "quest_confirmed"
+    assert entry["source_quest_id"] == quest["quest_id"]
+    assert entry["source_baseline_path"] == str(baseline_root)
+    assert entry["materializable"] is True
+    assert entry["availability"] == "ready"
 
 
 def test_artifact_arxiv_overview_falls_back_to_arxiv_abstract(temp_home: Path, monkeypatch) -> None:
@@ -790,17 +945,22 @@ def test_artifact_record_and_snapshot_include_guidance_vm(temp_home: Path) -> No
 
     assert recorded["ok"] is True
     assert recorded["guidance_vm"]["current_anchor"] == "baseline"
-    assert recorded["guidance_vm"]["recommended_skill"] == "idea"
+    assert recorded["guidance_vm"]["recommended_skill"] == "baseline"
+    assert recorded["guidance_vm"]["suggested_artifact_calls"][0]["name"] == "artifact.confirm_baseline(...)"
+    assert recorded["next_anchor"] == "baseline"
+    assert recorded["recommended_skill_reads"] == ["baseline"]
+    assert recorded["suggested_artifact_calls"][0]["name"] == "artifact.confirm_baseline(...)"
+    assert recorded["next_instruction"] == recorded["guidance"]
 
     payload = json.loads(Path(recorded["path"]).read_text(encoding="utf-8"))
     assert payload["guidance_vm"]["recommended_action"] == "continue"
 
     events = read_jsonl(quest_root / ".ds" / "events.jsonl")
     artifact_event = next(item for item in events if item.get("type") == "artifact.recorded")
-    assert artifact_event["guidance_vm"]["recommended_skill"] == "idea"
+    assert artifact_event["guidance_vm"]["recommended_skill"] == "baseline"
 
     snapshot = quest_service.snapshot(quest["quest_id"])
-    assert snapshot["guidance"]["recommended_skill"] == "idea"
+    assert snapshot["guidance"]["recommended_skill"] == "baseline"
     assert "baseline" in snapshot["guidance"]["current_anchor"]
 
 

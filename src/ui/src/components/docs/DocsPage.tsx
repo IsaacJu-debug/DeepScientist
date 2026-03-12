@@ -49,6 +49,11 @@ type HeadingEntry = {
   level: number
 }
 
+const DOCS_LANG_PREFIX: Record<Locale, string> = {
+  en: 'en/',
+  zh: 'zh/',
+}
+
 type GroupedDoc = {
   group: string
   items: Array<{
@@ -89,10 +94,39 @@ function parseHeadings(content: string): HeadingEntry[] {
   return headings
 }
 
-function groupDocs(items: QuestDocument[]): GroupedDoc[] {
+function stripLangPrefix(documentId: string): string {
+  for (const prefix of Object.values(DOCS_LANG_PREFIX)) {
+    if (documentId.startsWith(prefix)) {
+      return documentId.slice(prefix.length)
+    }
+  }
+  return documentId
+}
+
+function resolveDocsForLocale(items: QuestDocument[], locale: Locale): { items: QuestDocument[]; prefix: string } {
+  const desiredPrefix = DOCS_LANG_PREFIX[locale] ?? 'en/'
+  const localized = items.filter((item) => item.document_id?.startsWith(desiredPrefix))
+  if (localized.length > 0) {
+    return { items: localized, prefix: desiredPrefix }
+  }
+  const fallbackPrefix = DOCS_LANG_PREFIX.en
+  const fallback = items.filter((item) => item.document_id?.startsWith(fallbackPrefix))
+  if (fallback.length > 0) {
+    return { items: fallback, prefix: fallbackPrefix }
+  }
+  return { items, prefix: '' }
+}
+
+function pickDefaultDocId(items: QuestDocument[]): string | null {
+  const preferred = items.find((item) => stripLangPrefix(item.document_id || '').endsWith('TUI_USAGE.md'))
+  return preferred?.document_id ?? items[0]?.document_id ?? null
+}
+
+function groupDocs(items: QuestDocument[], options?: { stripPrefix?: string }): GroupedDoc[] {
   const groups = new Map<string, GroupedDoc>()
   for (const item of items) {
-    const raw = item.document_id || item.title || 'doc'
+    const rawId = item.document_id || item.title || 'doc'
+    const raw = options?.stripPrefix && rawId.startsWith(options.stripPrefix) ? rawId.slice(options.stripPrefix.length) : rawId
     const segments = raw.split('/').filter(Boolean)
     const group = segments.length > 1 ? segments[0] : 'root'
     const depth = Math.max(segments.length - 1, 0)
@@ -119,6 +153,7 @@ export function DocsPage({
 }) {
   const t = copy[locale]
   const [docs, setDocs] = useState<QuestDocument[]>([])
+  const [docsPrefix, setDocsPrefix] = useState('')
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [active, setActive] = useState<OpenDocumentPayload | null>(null)
@@ -138,8 +173,17 @@ export function DocsPage({
         if (!mounted) {
           return
         }
-        setDocs(payload)
-        const firstId = payload[0]?.document_id
+        const localized = resolveDocsForLocale(payload, locale)
+        const nextDocs = localized.items
+        setDocsPrefix(localized.prefix)
+        setDocs(nextDocs)
+        const previousActiveId = active?.document_id || null
+        const nextCandidateId = previousActiveId
+          ? `${localized.prefix}${stripLangPrefix(previousActiveId)}`
+          : null
+        const firstId =
+          (nextCandidateId && nextDocs.some((item) => item.document_id === nextCandidateId) ? nextCandidateId : null) ??
+          pickDefaultDocId(nextDocs)
         if (firstId) {
           setOpening(true)
           const first = await client.openSystemDoc(firstId)
@@ -160,7 +204,7 @@ export function DocsPage({
     return () => {
       mounted = false
     }
-  }, [])
+  }, [locale])
 
   useEffect(() => {
     const article = articleRef.current
@@ -204,14 +248,15 @@ export function DocsPage({
   const groupedDocs = useMemo(() => {
     const keyword = search.trim().toLowerCase()
     if (!keyword) {
-      return groupDocs(docs)
+      return groupDocs(docs, { stripPrefix: docsPrefix })
     }
     return groupDocs(
       docs.filter((item) =>
         `${item.title} ${item.document_id} ${item.path || ''}`.toLowerCase().includes(keyword)
-      )
+      ),
+      { stripPrefix: docsPrefix }
     )
-  }, [docs, search])
+  }, [docs, docsPrefix, search])
 
   const handleOpenDocument = async (documentId: string) => {
     setOpening(true)

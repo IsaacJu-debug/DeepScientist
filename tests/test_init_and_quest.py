@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 from deepscientist.config import ConfigManager
-from deepscientist.cli import _local_ui_url, init_command, pause_command
+from deepscientist.cli import _local_ui_url, init_command, metrics_command, pause_command
 from deepscientist.home import ensure_home_layout, repo_root
 from deepscientist.quest import QuestService
+from deepscientist.shared import ensure_dir, write_json, write_text
 from deepscientist.skills import SkillInstaller
 
 
@@ -39,9 +41,89 @@ def test_new_creates_standalone_git_repo(temp_home: Path) -> None:
     assert (quest_root / ".claude" / "agents").exists()
     assert (quest_root / ".claude" / "agents" / "deepscientist-decision.md").exists()
     assert (quest_root / ".codex" / "skills" / "deepscientist-finalize" / "SKILL.md").exists()
+    assert snapshot["quest_id"] == "001"
     assert snapshot["runner"] == "codex"
     assert "paths" in snapshot
     assert snapshot["summary"]["status_line"] == "Quest created. Waiting for baseline setup or reuse."
+
+
+def test_auto_generated_quest_ids_are_sequential(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    service = QuestService(temp_home)
+
+    first = service.create("first quest")
+    second = service.create("second quest")
+    third = service.create("third quest")
+
+    assert [first["quest_id"], second["quest_id"], third["quest_id"]] == ["001", "002", "003"]
+
+
+def test_deleted_quest_ids_are_not_reused(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    service = QuestService(temp_home)
+
+    first = service.create("first quest")
+    second = service.create("second quest")
+    third = service.create("third quest")
+    shutil.rmtree(Path(second["quest_root"]))
+
+    fourth = service.create("fourth quest")
+
+    assert [first["quest_id"], second["quest_id"], third["quest_id"], fourth["quest_id"]] == ["001", "002", "003", "004"]
+
+
+def test_auto_generated_quest_ids_initialize_from_existing_numeric_quests(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    for quest_id in ("001", "002", "010"):
+        quest_root = ensure_dir(temp_home / "quests" / quest_id)
+        write_text(quest_root / "quest.yaml", f'quest_id: "{quest_id}"\n')
+
+    service = QuestService(temp_home)
+    snapshot = service.create("after existing quests")
+
+    assert snapshot["quest_id"] == "011"
+
+
+def test_explicit_custom_quest_id_still_works(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    service = QuestService(temp_home)
+
+    snapshot = service.create("custom quest", quest_id="demo-quest")
+
+    assert snapshot["quest_id"] == "demo-quest"
+
+
+def test_explicit_numeric_quest_id_advances_next_auto_id(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    service = QuestService(temp_home)
+
+    explicit = service.create("explicit numeric quest", quest_id="010")
+    automatic = service.create("automatic after explicit numeric")
+
+    assert explicit["quest_id"] == "010"
+    assert automatic["quest_id"] == "011"
+
+
+def test_metrics_command_accepts_numeric_quest_id(temp_home: Path, capsys) -> None:
+    ensure_home_layout(temp_home)
+    service = QuestService(temp_home)
+    snapshot = service.create("metrics quest")
+    runs_root = ensure_dir(Path(snapshot["quest_root"]) / "artifacts" / "runs")
+    write_json(
+        runs_root / "run-001.json",
+        {
+            "run_id": "run-001",
+            "run_kind": "main",
+            "exit_code": 0,
+            "summary": "ok",
+        },
+    )
+
+    exit_code = metrics_command(temp_home, "001")
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"run_id": "run-001"' in captured.out
 
 
 def test_init_command_syncs_global_skills(temp_home: Path, monkeypatch) -> None:

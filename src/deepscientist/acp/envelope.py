@@ -17,6 +17,10 @@ def build_slash_commands(quest_id: str | None = None) -> list[dict[str, Any]]:
             "description": "Create a new quest explicitly, for example `/new reproduce the baseline`.",
         },
         {
+            "name": "/delete",
+            "description": f"Delete a quest (destructive; requires confirmation), for example `/delete {quest_arg} --yes`.",
+        },
+        {
             "name": "/resume",
             "description": f"Resume a stopped quest, for example `/resume {quest_arg}`.",
         },

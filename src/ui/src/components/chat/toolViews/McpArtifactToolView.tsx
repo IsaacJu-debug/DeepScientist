@@ -96,6 +96,17 @@ function renderArtifactRecord(tool: string | undefined, resultRecord: Record<str
   const summary = asString(record.summary) || asString(record.message) || asString(record.reason)
   const reason = asString(record.reason)
   const guidance = asString(resultRecord?.guidance) || asString(record.guidance)
+  const recommendedSkillReads = asStringArray(resultRecord?.recommended_skill_reads)
+  const suggestedArtifactCalls = Array.isArray(resultRecord?.suggested_artifact_calls)
+    ? resultRecord?.suggested_artifact_calls
+        .map((entry) => asRecord(entry))
+        .filter((entry): entry is NonNullable<ReturnType<typeof asRecord>> => Boolean(entry))
+        .map((entry) => {
+          const name = asString(entry.name)
+          const purpose = asString(entry.purpose)
+          return [name, purpose].filter(Boolean).join(' — ')
+        })
+    : []
   const status = asString(record.status)
   const artifactId = asString(record.artifact_id) || asString(record.id)
   const metricSummary = asRecord(record.metrics_summary)
@@ -137,6 +148,31 @@ function renderArtifactRecord(tool: string | undefined, resultRecord: Record<str
             <div className="flex items-start gap-2 rounded-[12px] border border-[var(--border-light)] bg-[rgba(255,255,255,0.68)] px-3 py-3 text-[12px] text-[var(--text-secondary)]">
               <Route className="mt-0.5 h-4 w-4 text-[#7a7297]" />
               <span>{guidance}</span>
+            </div>
+          ) : null}
+          {recommendedSkillReads.length > 0 || suggestedArtifactCalls.length > 0 ? (
+            <div className="rounded-[12px] bg-[rgba(255,255,255,0.62)] px-3 py-3 text-[12px] leading-6 text-[var(--text-secondary)]">
+              <div className="flex items-start gap-2">
+                <Sparkles className="mt-0.5 h-4 w-4 text-[#7a7297]" />
+                <div className="space-y-2">
+                  {recommendedSkillReads.length > 0 ? (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] font-medium text-[var(--text-tertiary)]">Read:</span>
+                      {recommendedSkillReads.map((skill) => (
+                        <DsToolPill key={skill} tone="muted">
+                          {skill}
+                        </DsToolPill>
+                      ))}
+                    </div>
+                  ) : null}
+                  {suggestedArtifactCalls.length > 0 ? (
+                    <div>
+                      <div className="text-[11px] font-medium text-[var(--text-tertiary)]">Suggested calls:</div>
+                      <div className="mt-2">{renderBulletList(suggestedArtifactCalls)}</div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
             </div>
           ) : null}
         </div>
@@ -408,6 +444,12 @@ export function McpArtifactToolView({ toolContent }: ToolViewProps) {
     prepare_branch: active ? 'DeepScientist is preparing branch...' : 'DeepScientist prepared branch.',
     publish_baseline: active ? 'DeepScientist is publishing baseline...' : 'DeepScientist published baseline.',
     attach_baseline: active ? 'DeepScientist is attaching baseline...' : 'DeepScientist attached baseline.',
+    confirm_baseline: active ? 'DeepScientist is confirming baseline...' : 'DeepScientist confirmed baseline.',
+    waive_baseline: active ? 'DeepScientist is waiving baseline...' : 'DeepScientist waived baseline.',
+    submit_idea: active ? 'DeepScientist is submitting idea...' : 'DeepScientist submitted idea.',
+    record_main_experiment: active ? 'DeepScientist is recording main experiment...' : 'DeepScientist recorded main experiment.',
+    create_analysis_campaign: active ? 'DeepScientist is creating analysis campaign...' : 'DeepScientist created analysis campaign.',
+    record_analysis_slice: active ? 'DeepScientist is recording analysis slice...' : 'DeepScientist recorded analysis slice.',
     arxiv: active ? 'DeepScientist is reading arXiv paper...' : 'DeepScientist read arXiv paper.',
     refresh_summary: active ? 'DeepScientist is refreshing summary...' : 'DeepScientist refreshed summary.',
     render_git_graph: active ? 'DeepScientist is rendering git graph...' : 'DeepScientist rendered git graph.',
@@ -463,6 +505,14 @@ export function McpArtifactToolView({ toolContent }: ToolViewProps) {
         {tool === 'refresh_summary' ? renderRefreshSummary(resultRecord, args) : null}
         {tool === 'render_git_graph' ? renderGitGraph(resultRecord) : null}
         {tool === 'interact' ? renderInteract(resultRecord, args) : null}
+
+        {tool &&
+        ['submit_idea', 'record_main_experiment', 'create_analysis_campaign', 'confirm_baseline', 'waive_baseline', 'record_analysis_slice'].includes(
+          tool
+        ) &&
+        asRecord(resultRecord?.artifact)
+          ? renderArtifactRecord('record', asRecord(resultRecord?.artifact), args)
+          : null}
 
         {tool === 'attach_baseline' && resultRecord?.artifact ? (
           <DsToolSection title="Follow-up artifact">

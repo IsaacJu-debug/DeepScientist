@@ -129,3 +129,47 @@ def test_generic_connector_supports_terminal_command_and_restore(temp_home: Path
     assert restore_reply["accepted"] is True
     assert "Terminal `terminal-main`" in restore_reply["reply"]["payload"]["text"]
     assert "latest commands:" in restore_reply["reply"]["payload"]["text"]
+
+
+def test_generic_connector_supports_delete_command_with_confirmation(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    quest_service = QuestService(temp_home, skill_installer=SkillInstaller(repo_root(), temp_home))
+    first = quest_service.create("connector delete quest one")
+    second = quest_service.create("connector delete quest two")
+    first_id = first["quest_id"]
+    second_id = second["quest_id"]
+    first_root = Path(first["quest_root"])
+    second_root = Path(second["quest_root"])
+    assert first_root.exists()
+    assert second_root.exists()
+
+    app = DaemonApp(temp_home)
+
+    confirm_reply = app.handle_connector_inbound(
+        "whatsapp",
+        {
+            "chat_type": "direct",
+            "sender_id": "+15550003333",
+            "sender_name": "Researcher",
+            "text": f"/delete {first_id}",
+        },
+    )
+    assert confirm_reply["accepted"] is True
+    assert first_id in confirm_reply["reply"]["payload"]["text"]
+    assert "--yes" in confirm_reply["reply"]["payload"]["text"]
+    assert first_root.exists()
+
+    delete_reply = app.handle_connector_inbound(
+        "whatsapp",
+        {
+            "chat_type": "direct",
+            "sender_id": "+15550003333",
+            "sender_name": "Researcher",
+            "text": f"/delete {first_id} --yes",
+        },
+    )
+    assert delete_reply["accepted"] is True
+    assert first_id in delete_reply["reply"]["payload"]["text"]
+    assert not first_root.exists()
+    assert second_root.exists()

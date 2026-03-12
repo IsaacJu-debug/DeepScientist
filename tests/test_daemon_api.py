@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
+from deepscientist.artifact import ArtifactService
 from deepscientist.config import ConfigManager
 from deepscientist.daemon.api.router import match_route
 from deepscientist.daemon.app import DaemonApp
@@ -340,6 +341,61 @@ def test_quest_settings_handler_rejects_invalid_anchor(temp_home: Path) -> None:
     assert "active anchor" in str(payload["message"]).lower()
 
 
+def test_quest_bindings_handler_detects_conflicts_and_forces_rebind(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+    first = app.quest_service.create("binding quest one")
+    second = app.quest_service.create("binding quest two")
+    first_id = first["quest_id"]
+    second_id = second["quest_id"]
+    conversation_id = "qq:direct:OPENID123"
+
+    payload = app.handlers.quest_bindings(first_id, {"conversation_id": conversation_id, "force": True})
+    assert isinstance(payload, dict)
+    assert payload["ok"] is True
+    assert payload["conversation_id"] == conversation_id
+
+    status_code, conflict_payload = app.handlers.quest_bindings(second_id, {"conversation_id": conversation_id})
+    assert status_code == 409
+    assert conflict_payload["ok"] is False
+    assert conflict_payload["conflict"] is True
+    assert any(item["quest_id"] == first_id for item in conflict_payload["conflicts"])
+
+    resolved = app.handlers.quest_bindings(second_id, {"conversation_id": conversation_id, "force": True})
+    assert isinstance(resolved, dict)
+    assert resolved["ok"] is True
+    assert resolved["quest_id"] == second_id
+    assert resolved["conversation_id"] == conversation_id
+
+    first_sources = app.quest_service.binding_sources(first_id)
+    assert conversation_id not in first_sources
+    bindings = app.list_connector_bindings("qq")
+    assert any(item["conversation_id"] == conversation_id and item["quest_id"] == second_id for item in bindings)
+
+
+def test_quest_delete_handler_removes_repo_and_unbinds_connectors(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+    quest = app.quest_service.create("delete quest")
+    quest_id = quest["quest_id"]
+    quest_root = Path(quest["quest_root"])
+    conversation_id = "qq:direct:OPENID_DELETE"
+    bound = app.update_quest_binding(quest_id, conversation_id, force=True)
+    assert isinstance(bound, dict)
+    assert bound["ok"] is True
+    assert quest_root.exists()
+
+    payload = app.handlers.quest_delete(quest_id, {"source": "pytest"})
+
+    assert isinstance(payload, dict)
+    assert payload["ok"] is True
+    assert payload["deleted"] is True
+    assert not quest_root.exists()
+    assert all(item["conversation_id"] != conversation_id for item in app.list_connector_bindings("qq"))
+
+
 def test_bash_exec_handlers_expose_sessions_logs_and_stop(temp_home: Path) -> None:
     ensure_home_layout(temp_home)
     ConfigManager(temp_home).ensure_files()
@@ -636,6 +692,87 @@ def test_chat_endpoint_schedules_background_runner(temp_home: Path) -> None:
     else:
         raise AssertionError("quest status did not settle back to active after the background turn")
     assert quest_root.exists()
+
+
+def test_quest_create_with_requested_baseline_attaches_materializes_and_confirms(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+    source = app.quest_service.create("source baseline quest")
+    source_root = Path(source["quest_root"])
+    baseline_root = source_root / "baselines" / "local" / "demo-baseline"
+    baseline_root.mkdir(parents=True, exist_ok=True)
+    (baseline_root / "README.md").write_text("# Demo baseline\n", encoding="utf-8")
+
+    ArtifactService(temp_home).confirm_baseline(
+        source_root,
+        baseline_path=str(baseline_root),
+        baseline_id="demo-baseline",
+        summary="Source baseline confirmed",
+        metric_contract={
+            "primary_metric_id": "acc",
+            "metrics": [{"metric_id": "acc", "direction": "higher"}],
+        },
+        metrics_summary={"acc": 0.91},
+        primary_metric={"name": "acc", "value": 0.91},
+    )
+
+    payload = app.handlers.quest_create(
+        {
+            "goal": "Reuse the confirmed baseline and continue from there.",
+            "title": "Baseline reuse quest",
+            "quest_id": "quest-with-bound-baseline",
+            "requested_baseline_ref": {
+                "baseline_id": "demo-baseline",
+            },
+            "startup_contract": {
+                "scope": "baseline_only",
+                "baseline_mode": "existing",
+            },
+        }
+    )
+
+    assert isinstance(payload, dict)
+    assert payload["ok"] is True
+    snapshot = payload["snapshot"]
+    assert snapshot["quest_id"] == "quest-with-bound-baseline"
+    assert snapshot["baseline_gate"] == "confirmed"
+    assert snapshot["requested_baseline_ref"]["baseline_id"] == "demo-baseline"
+    assert snapshot["startup_contract"]["scope"] == "baseline_only"
+    assert snapshot["confirmed_baseline_ref"]["baseline_id"] == "demo-baseline"
+    assert snapshot["confirmed_baseline_ref"]["baseline_root_rel_path"] == "baselines/imported/demo-baseline"
+    assert (Path(snapshot["quest_root"]) / "baselines" / "imported" / "demo-baseline" / "README.md").exists()
+
+
+def test_quest_create_fails_fast_when_requested_baseline_cannot_materialize(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+    app.artifact_service.baselines.publish(
+        {
+            "baseline_id": "missing-baseline",
+            "summary": "Broken baseline entry",
+            "path": str(temp_home / "missing-baseline-root"),
+        }
+    )
+
+    payload = app.handlers.quest_create(
+        {
+            "goal": "Try to reuse a missing baseline.",
+            "title": "Should fail",
+            "quest_id": "quest-should-fail-baseline-bootstrap",
+            "requested_baseline_ref": {
+                "baseline_id": "missing-baseline",
+            },
+        }
+    )
+
+    assert isinstance(payload, tuple)
+    status, body = payload
+    assert status == 409
+    assert body["ok"] is False
+    assert "requested baseline `missing-baseline`" in str(body["message"])
+    assert not (temp_home / "quests" / "quest-should-fail-baseline-bootstrap").exists()
 
 
 def test_chat_endpoint_relays_assistant_reply_to_bound_connector(temp_home: Path) -> None:

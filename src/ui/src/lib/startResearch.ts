@@ -15,7 +15,8 @@ export type StartResearchTemplate = {
   title: string
   quest_id: string
   goal: string
-  baseline_root_id: string
+  baseline_id: string
+  baseline_variant_id: string
   baseline_urls: string
   paper_urls: string
   runtime_constraints: string
@@ -111,7 +112,8 @@ export function defaultStartResearchTemplate(language: 'en' | 'zh'): StartResear
     title: '',
     quest_id: '',
     goal: '',
-    baseline_root_id: '',
+    baseline_id: '',
+    baseline_variant_id: '',
     baseline_urls: '',
     paper_urls: '',
     runtime_constraints: '',
@@ -164,12 +166,14 @@ function sanitizeLines(text: string) {
 }
 
 function sanitizeTemplate(input: StartResearchTemplate): StartResearchTemplate {
+  const legacyBaselineId = (input as StartResearchTemplate & { baseline_root_id?: string }).baseline_root_id
   return {
     ...input,
     title: input.title.trim(),
     quest_id: slugifyQuestRepo(input.quest_id),
     goal: input.goal.trim(),
-    baseline_root_id: input.baseline_root_id.trim(),
+    baseline_id: String(input.baseline_id || legacyBaselineId || '').trim(),
+    baseline_variant_id: input.baseline_variant_id.trim(),
     baseline_urls: input.baseline_urls.trim(),
     paper_urls: input.paper_urls.trim(),
     runtime_constraints: input.runtime_constraints.trim(),
@@ -201,7 +205,7 @@ function labelScope(value: ResearchScope) {
 function labelBaselineMode(value: BaselineMode) {
   switch (value) {
     case 'existing':
-      return 'Use existing baseline: reuse a known baseline root and verify it before moving forward.'
+      return 'Use existing baseline: select a reusable baseline entry and let runtime attach and confirm it before the quest begins.'
     case 'restore_from_url':
       return 'Restore from URL: recover the baseline from provided repositories or artifact links.'
     case 'allow_degraded_minimal_reproduction':
@@ -237,8 +241,9 @@ export function compileStartResearchPrompt(input: StartResearchTemplate) {
   const normalized = sanitizeTemplate(input)
   const baselineUrls = sanitizeLines(normalized.baseline_urls)
   const paperUrls = sanitizeLines(normalized.paper_urls)
-  const baselineContext = normalized.baseline_root_id
-    ? `Use existing baseline_root_id: ${normalized.baseline_root_id}. Verify that it is still runnable and that its metrics are trustworthy before opening any new main branch.`
+  const baselineVariant = normalized.baseline_variant_id
+  const baselineContext = normalized.baseline_id
+    ? `Runtime will attach and confirm baseline_id ${normalized.baseline_id}${baselineVariant ? ` (variant ${baselineVariant})` : ''} before the quest starts. Treat it as the pre-bound baseline unless you find a concrete incompatibility, corruption, or missing-evidence problem.`
     : baselineUrls.length > 0
       ? baselineUrls.map((url) => `- ${url}`).join('\n')
       : 'No baseline link has been attached yet. The first obligation is to discover, repair, or reconstruct a reusable baseline.'
@@ -297,6 +302,9 @@ export function loadStartResearchTemplate(language: 'en' | 'zh') {
     const base = {
       ...defaultStartResearchTemplate(language),
       ...parsed,
+      baseline_id: String(
+        (parsed as Partial<StartResearchTemplate> & { baseline_root_id?: string }).baseline_root_id || parsed.baseline_id || ''
+      ),
       user_language: language,
     }
     return {
@@ -330,12 +338,27 @@ export function loadStartResearchHistory(): StartResearchTemplateEntry[] {
     }
     return parsed
       .filter((item) => item && typeof item === 'object')
-      .map((item) => item as StartResearchTemplateEntry)
+      .map((item) => {
+        const rawItem = item as Partial<StartResearchTemplateEntry> & { baseline_root_id?: string }
+        const normalized = sanitizeTemplate({
+          ...defaultStartResearchTemplate((rawItem.user_language as 'en' | 'zh') || languageFromHistory(rawItem)),
+          ...rawItem,
+          baseline_id: String(rawItem.baseline_id || rawItem.baseline_root_id || ''),
+        })
+        return {
+          ...rawItem,
+          ...normalized,
+        } as StartResearchTemplateEntry
+      })
       .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
       .slice(0, MAX_TEMPLATE_HISTORY)
   } catch {
     return []
   }
+}
+
+function languageFromHistory(item: Partial<StartResearchTemplateEntry>): 'en' | 'zh' {
+  return item.user_language === 'en' ? 'en' : 'zh'
 }
 
 export function saveStartResearchTemplate(input: StartResearchTemplate): StartResearchTemplateEntry {

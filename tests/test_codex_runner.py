@@ -74,6 +74,7 @@ def test_codex_runner_creates_history_and_run_outputs(temp_home: Path, monkeypat
     assert "[mcp_servers.memory]" in config_text
     assert "[mcp_servers.artifact]" in config_text
     assert "[mcp_servers.bash_exec]" in config_text
+    assert "tool_timeout_sec" in config_text
     command_payload = json.loads((result.run_root / "command.json").read_text(encoding="utf-8"))
     assert "--search" in command_payload["command"]
     assert "-c" in command_payload["command"]
@@ -237,6 +238,20 @@ def test_codex_runner_executes_inside_active_worktree_and_sets_env(temp_home: Pa
     quest = quest_service.create("runner worktree quest")
     quest_root = Path(quest["quest_root"])
     artifact = ArtifactService(temp_home)
+    baseline_root = quest_root / "baselines" / "local" / "runner-baseline"
+    baseline_root.mkdir(parents=True, exist_ok=True)
+    artifact.confirm_baseline(
+        quest_root,
+        baseline_path=str(baseline_root),
+        baseline_id="runner-baseline",
+        summary="Runner baseline confirmed",
+        metrics_summary={"acc": 0.8},
+        primary_metric={"name": "acc", "value": 0.8},
+        metric_contract={
+            "primary_metric_id": "acc",
+            "metrics": [{"metric_id": "acc", "direction": "higher"}],
+        },
+    )
     idea_result = artifact.submit_idea(
         quest_root,
         mode="create",

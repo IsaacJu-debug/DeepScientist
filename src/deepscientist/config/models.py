@@ -84,6 +84,10 @@ def default_runners() -> dict:
             "model": "gpt-5.4",
             "approval_policy": "on-request",
             "sandbox_mode": "workspace-write",
+            # Increase MCP tool timeout so codex can wait for long `bash_exec(mode='await', ...)`
+            # or other durable MCP calls without prematurely timing out.
+            # Mirrors DS_2027's `codex.mcp_tool_timeout_sec` default.
+            "mcp_tool_timeout_sec": 180000,
             "env": {},
         },
         "claude": {

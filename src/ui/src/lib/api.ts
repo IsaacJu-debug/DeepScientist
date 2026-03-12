@@ -1,4 +1,5 @@
 import type {
+  BaselineRegistryEntry,
   ConfigFileEntry,
   ConfigTestPayload,
   ConfigValidationPayload,
@@ -47,6 +48,20 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return (await response.json()) as T
 }
 
+async function parseResponseBody(response: Response): Promise<Record<string, unknown>> {
+  const text = await response.text()
+  if (!text) return {}
+  try {
+    const payload = JSON.parse(text)
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      return payload as Record<string, unknown>
+    }
+    return { value: payload }
+  } catch {
+    return { message: text }
+  }
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     headers: {
@@ -59,6 +74,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const client = {
   quests: () => api<QuestSummary[]>('/api/quests'),
+  baselines: () => api<BaselineRegistryEntry[]>('/api/baselines'),
   session: (questId: string) => api<SessionPayload>(`/api/quests/${questId}/session`),
   updateQuestSettings: (
     questId: string,
@@ -72,6 +88,26 @@ export const client = {
       method: 'PATCH',
       body: JSON.stringify(payload),
     }),
+  updateQuestBindings: async (
+    questId: string,
+    payload: {
+      conversation_id?: string | null
+      force?: boolean
+    }
+  ) => {
+    const response = await fetch(`/api/quests/${questId}/bindings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    })
+    const body = await parseResponseBody(response)
+    return {
+      status: response.status,
+      ...body,
+    } as Record<string, unknown>
+  },
   events: (questId: string, after: number, options?: { limit?: number; tail?: boolean }) => {
     const params = new URLSearchParams()
     params.set('after', String(after))
@@ -230,10 +266,21 @@ export const client = {
       method: 'POST',
       body: JSON.stringify({ goal }),
     }),
-  createQuestWithOptions: (payload: { goal: string; title?: string; quest_id?: string }) =>
+  createQuestWithOptions: (payload: {
+    goal: string
+    title?: string
+    quest_id?: string
+    requested_baseline_ref?: { baseline_id: string; variant_id?: string | null } | null
+    startup_contract?: Record<string, unknown> | null
+  }) =>
     api<{ ok: boolean; snapshot: QuestSummary }>('/api/quests', {
       method: 'POST',
       body: JSON.stringify(payload),
+    }),
+  deleteQuest: (questId: string) =>
+    api<{ ok: boolean; quest_id: string; deleted?: boolean }>(`/api/quests/${questId}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ source: 'web-react' }),
     }),
   docsIndex: () => api<QuestDocument[]>('/api/docs'),
   openSystemDoc: (documentId: string) =>

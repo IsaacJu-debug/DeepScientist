@@ -229,6 +229,19 @@ class QQRelayChannel(BaseChannel):
         write_json(self.bindings_path, bindings)
         return binding_map[conversation_id]
 
+    def unbind_conversation(self, conversation_id: str, *, quest_id: str | None = None) -> bool:
+        bindings = read_json(self.bindings_path, {"bindings": {}})
+        binding_map = dict(bindings.get("bindings") or {})
+        existing = binding_map.get(conversation_id)
+        if quest_id and isinstance(existing, dict) and str(existing.get("quest_id") or "").strip() != quest_id:
+            return False
+        if conversation_id not in binding_map:
+            return False
+        binding_map.pop(conversation_id, None)
+        bindings["bindings"] = binding_map
+        write_json(self.bindings_path, bindings)
+        return True
+
     def resolve_bound_quest(self, conversation_id: str) -> str | None:
         bindings = read_json(self.bindings_path, {"bindings": {}})
         item = (bindings.get("bindings") or {}).get(conversation_id)

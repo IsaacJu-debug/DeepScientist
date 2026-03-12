@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 from ..artifact.metrics import normalize_metric_contract, normalize_metrics_summary
 from ..shared import append_jsonl, ensure_dir, read_jsonl, read_yaml, resolve_within, utc_now, write_yaml
@@ -18,6 +19,7 @@ class BaselineRegistry:
         self.index_path = self.root / "index.jsonl"
 
     def list_entries(self) -> list[dict]:
+        self.reconcile_confirmed_quests()
         entry_files = sorted(self.entries_root.glob("*.yaml"))
         if entry_files:
             return sorted((self._load_entry_file(path) for path in entry_files), key=self._entry_sort_key)
@@ -34,14 +36,11 @@ class BaselineRegistry:
         path = self._entry_path(normalized_id)
         if path.exists():
             return self._load_entry_file(path)
-        return next(
-            (
-                item
-                for item in self.list_entries()
-                if item.get("baseline_id") == normalized_id or item.get("entry_id") == normalized_id
-            ),
-            None,
-        )
+        latest_match = None
+        for item in self._history_entries():
+            if item.get("baseline_id") == normalized_id or item.get("entry_id") == normalized_id:
+                latest_match = item
+        return latest_match
 
     def publish(self, entry: dict) -> dict:
         timestamp = utc_now()
@@ -92,6 +91,121 @@ class BaselineRegistry:
         write_yaml(self._entry_path(baseline_id), normalized)
         append_jsonl(self.index_path, normalized)
         return normalized
+
+    def reconcile_confirmed_quests(self) -> list[dict]:
+        quests_root = self.home / "quests"
+        if not quests_root.exists():
+            return []
+
+        synchronized: list[dict] = []
+        for quest_yaml in sorted(quests_root.glob("*/quest.yaml")):
+            quest_root = quest_yaml.parent
+            payload = read_yaml(quest_yaml, {})
+            if not isinstance(payload, dict):
+                continue
+            if str(payload.get("baseline_gate") or "").strip().lower() != "confirmed":
+                continue
+
+            confirmed_ref = (
+                dict(payload.get("confirmed_baseline_ref") or {})
+                if isinstance(payload.get("confirmed_baseline_ref"), dict)
+                else {}
+            )
+            baseline_id = str(confirmed_ref.get("baseline_id") or "").strip()
+            if not baseline_id:
+                continue
+
+            baseline_root_rel_path = str(confirmed_ref.get("baseline_root_rel_path") or "").strip()
+            if baseline_root_rel_path:
+                try:
+                    baseline_root = resolve_within(quest_root, baseline_root_rel_path)
+                except ValueError:
+                    baseline_root = quest_root / "baselines" / "local" / baseline_id
+            else:
+                source_mode = str(confirmed_ref.get("source_mode") or "").strip().lower()
+                if source_mode == "imported":
+                    baseline_root = quest_root / "baselines" / "imported" / baseline_id
+                else:
+                    baseline_root = quest_root / "baselines" / "local" / baseline_id
+
+            attachment_path = quest_root / "baselines" / "imported" / baseline_id / "attachment.yaml"
+            attachment = read_yaml(attachment_path, {}) if attachment_path.exists() else {}
+            attachment_entry = (
+                dict(attachment.get("entry") or {})
+                if isinstance(attachment, dict) and isinstance(attachment.get("entry"), dict)
+                else {}
+            )
+            selected_variant = (
+                dict(attachment.get("selected_variant") or {})
+                if isinstance(attachment, dict) and isinstance(attachment.get("selected_variant"), dict)
+                else {}
+            )
+
+            normalized_variant_id = str(
+                confirmed_ref.get("variant_id")
+                or selected_variant.get("variant_id")
+                or attachment_entry.get("default_variant_id")
+                or ""
+            ).strip() or None
+            metrics_summary = normalize_metrics_summary(attachment_entry.get("metrics_summary"))
+            baseline_variants = attachment_entry.get("baseline_variants")
+            if not isinstance(baseline_variants, list):
+                baseline_variants = []
+            if normalized_variant_id and not baseline_variants:
+                baseline_variants = [
+                    {
+                        "variant_id": normalized_variant_id,
+                        "label": normalized_variant_id,
+                        "metrics_summary": metrics_summary,
+                    }
+                ]
+
+            source_baseline_path = str(
+                attachment_entry.get("path")
+                or confirmed_ref.get("baseline_path")
+                or baseline_root
+            ).strip()
+            source_path = Path(source_baseline_path).expanduser()
+            materializable = source_path.is_dir()
+            entry = {
+                **attachment_entry,
+                "baseline_id": baseline_id,
+                "entry_id": baseline_id,
+                "status": "quest_confirmed",
+                "summary": (
+                    str(attachment_entry.get("summary") or "").strip()
+                    or f"Confirmed baseline from quest `{quest_root.name}`."
+                ),
+                "path": str(source_path),
+                "source_mode": str(confirmed_ref.get("source_mode") or attachment_entry.get("source_mode") or "").strip()
+                or ("imported" if "baselines/imported/" in baseline_root.as_posix() else "local"),
+                "source_quest_id": quest_root.name,
+                "source_baseline_path": str(source_path),
+                "confirmed_at": str(
+                    confirmed_ref.get("confirmed_at") or payload.get("updated_at") or attachment_entry.get("updated_at") or utc_now()
+                ),
+                "selected_variant_id": normalized_variant_id,
+                "materializable": materializable,
+                "availability": "ready" if materializable else "missing",
+                "default_variant_id": attachment_entry.get("default_variant_id") or normalized_variant_id,
+                "baseline_variants": baseline_variants,
+                "metric_contract": normalize_metric_contract(
+                    attachment_entry.get("metric_contract"),
+                    baseline_id=baseline_id,
+                    metrics_summary=metrics_summary,
+                    primary_metric=attachment_entry.get("primary_metric"),
+                    baseline_variants=baseline_variants,
+                ),
+                "primary_metric": attachment_entry.get("primary_metric"),
+                "metrics_summary": metrics_summary,
+            }
+
+            existing = self._existing_entry(baseline_id)
+            if self._entry_needs_publish(existing, entry):
+                synchronized.append(self.publish(entry))
+            elif existing:
+                synchronized.append(existing)
+        return synchronized
 
     def attach(self, quest_root: Path, baseline_id: str, variant_id: str | None = None) -> dict:
         normalized_baseline_id = self._normalize_identifier(baseline_id, field_name="Baseline id")
@@ -170,6 +284,36 @@ class BaselineRegistry:
             "path": str(path),
             "summary": "Registry entry could not be loaded as a mapping.",
         }
+
+    def _existing_entry(self, baseline_id: str) -> dict[str, Any] | None:
+        path = self._entry_path(baseline_id)
+        if not path.exists():
+            return None
+        entry = self._load_entry_file(path)
+        return entry if isinstance(entry, dict) and entry else None
+
+    @staticmethod
+    def _entry_needs_publish(existing: dict[str, Any] | None, candidate: dict[str, Any]) -> bool:
+        if not existing:
+            return True
+        tracked_fields = (
+            "status",
+            "summary",
+            "path",
+            "source_mode",
+            "source_quest_id",
+            "source_baseline_path",
+            "confirmed_at",
+            "selected_variant_id",
+            "materializable",
+            "availability",
+            "default_variant_id",
+            "baseline_variants",
+            "metric_contract",
+            "primary_metric",
+            "metrics_summary",
+        )
+        return any(existing.get(field) != candidate.get(field) for field in tracked_fields)
 
     def _normalize_variants(self, variants: list[dict]) -> list[dict]:
         normalized_variants: list[dict] = []

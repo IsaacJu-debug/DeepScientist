@@ -335,6 +335,16 @@ def run_monitor(session_dir: Path) -> int:
         if buffer:
             append_line(buffer)
 
+        if not stop_requested and not stop_reason and stop_request_path.exists():
+            request = read_json(stop_request_path, {}) or {}
+            stop_reason = str(request.get("reason") or "user_stop").strip() or "user_stop"
+            stop_requested = True
+            update_meta(
+                status="terminating",
+                stop_reason=stop_reason,
+                stopped_by_user_id=str(request.get("user_id") or meta.get("stopped_by_user_id") or meta.get("agent_id") or "agent"),
+            )
+
         exit_code = process.wait()
         if stop_requested or stop_reason:
             status = "terminated"

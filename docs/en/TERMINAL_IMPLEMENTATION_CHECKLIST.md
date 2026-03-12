@@ -103,8 +103,8 @@ The Terminal feature should stay:
 
 ## 8. Docs
 
-- [ ] Update `docs/TUI_USAGE.md` with `/terminal` usage.
-- [ ] Update `docs/RUNTIME_FLOW_AND_CANVAS.md` with terminal session semantics.
+- [ ] Update `docs/en/TUI_USAGE.md` with `/terminal` usage.
+- [ ] Update `docs/en/RUNTIME_FLOW_AND_CANVAS.md` with terminal session semantics.
 - [ ] Add a terminal protocol doc with:
   - session model
   - API

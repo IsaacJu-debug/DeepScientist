@@ -356,7 +356,7 @@ def graph_command(home: Path, quest_id: str) -> int:
 
 
 def metrics_command(home: Path, target: str) -> int:
-    if target.startswith("q-"):
+    if (home / "quests" / target / "quest.yaml").exists():
         quest_root = home / "quests" / target
         runs = sorted((quest_root / "artifacts" / "runs").glob("*.json"))
         payload = []
@@ -412,7 +412,7 @@ def baseline_list_command(home: Path) -> int:
 def baseline_attach_command(home: Path, quest_id: str, baseline_id: str, variant_id: str | None) -> int:
     result = ArtifactService(home).attach_baseline(home / "quests" / quest_id, baseline_id, variant_id)
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    return 0 if result.get("ok") else 1
 
 
 def config_show_command(home: Path, name: str) -> int:

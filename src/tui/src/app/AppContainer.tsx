@@ -457,8 +457,9 @@ export const AppContainer: React.FC<{ baseUrl: string; initialQuestId?: string |
     const localCommands = [
       { name: '/home', description: 'Return to home request mode.' },
       { name: '/projects', description: 'Open the quest browser.' },
-      { name: '/use', description: 'Bind a quest, for example `/use q-001`.' },
+      { name: '/use', description: 'Bind a quest, for example `/use 001`.' },
       { name: '/new', description: 'Create a new quest explicitly.' },
+      { name: '/delete', description: 'Delete a quest (requires --yes).' },
       { name: '/pause', description: 'Pause a running quest.' },
       { name: '/resume', description: 'Resume a stopped quest.' },
       { name: '/stop', description: 'Stop a running quest.' },
@@ -1115,6 +1116,40 @@ export const AppContainer: React.FC<{ baseUrl: string; initialQuestId?: string |
           const payload = await client.createQuest(baseUrl, slash.arg)
           setStatusLine(`Created ${payload.snapshot.quest_id}`)
           await focusQuest(payload.snapshot.quest_id)
+          return
+        }
+        if (slash?.name === '/delete') {
+          if (!slash.arg) {
+            setStatusLine('Usage · /delete <quest_id> [--yes]')
+            return
+          }
+          const tokens = slash.arg.split(/\s+/).filter(Boolean)
+          const token = tokens[0]?.trim() ?? ''
+          if (!token) {
+            setStatusLine('Usage · /delete <quest_id> [--yes]')
+            return
+          }
+          const target =
+            token.toLowerCase() === 'latest' || token.toLowerCase() === 'newest'
+              ? quests[0] ?? null
+              : resolveQuestToken(token, quests)
+          if (!target) {
+            setStatusLine(`Unknown quest · ${token}`)
+            return
+          }
+          const confirmed = tokens
+            .slice(1)
+            .some((item) => ['--yes', '--force', '-y'].includes(item.toLowerCase()))
+          if (!confirmed) {
+            setStatusLine(`Confirm delete · /delete ${target.quest_id} --yes`)
+            return
+          }
+          await client.deleteQuest(baseUrl, target.quest_id)
+          if (activeQuestId === target.quest_id) {
+            leaveQuest()
+          }
+          setStatusLine(`Deleted ${target.quest_id}`)
+          await refresh(true)
           return
         }
 

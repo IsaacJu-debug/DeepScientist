@@ -2042,6 +2042,15 @@
   background: var(--file-tree-row-selected-bg);
 }
 
+.file-tree-node.is-diff {
+  background: rgba(205, 152, 96, 0.14);
+  box-shadow: 0 0 0 1px rgba(205, 152, 96, 0.24) inset;
+}
+
+.file-tree-node.is-scope-root {
+  box-shadow: 0 0 0 1px rgba(143, 163, 184, 0.28) inset;
+}
+
 .file-tree-node.is-focused {
   box-shadow: 0 0 0 1px var(--file-tree-focus-ring) inset;
 }
@@ -2078,6 +2087,20 @@
 
 .file-tree-node .file-tree-folder-icon {
   color: var(--file-tree-folder-icon);
+}
+
+.file-tree-node-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(205, 152, 96, 0.16);
+  color: rgba(205, 152, 96, 0.96);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 @keyframes fileTreePulse {

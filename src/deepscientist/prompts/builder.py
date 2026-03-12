@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from ..memory import MemoryService
 from ..memory.frontmatter import load_markdown_document
 from ..quest import QuestService
 from ..registries import BaselineRegistry
-from ..shared import read_text
+from ..shared import read_text, read_yaml
 
 STANDARD_SKILLS = (
     "scout",
@@ -193,9 +194,41 @@ class PromptBuilder:
         return "\n".join(parts).strip()
 
     def _durable_state_block(self, snapshot: dict, quest_root: Path) -> str:
+        requested_baseline_ref = (
+            dict(snapshot.get("requested_baseline_ref") or {})
+            if isinstance(snapshot.get("requested_baseline_ref"), dict)
+            else None
+        )
+        startup_contract = (
+            dict(snapshot.get("startup_contract") or {})
+            if isinstance(snapshot.get("startup_contract"), dict)
+            else None
+        )
+        confirmed_baseline_ref = (
+            dict(snapshot.get("confirmed_baseline_ref") or {})
+            if isinstance(snapshot.get("confirmed_baseline_ref"), dict)
+            else None
+        )
+        requested_baseline_id = str((requested_baseline_ref or {}).get("baseline_id") or "").strip()
+        confirmed_baseline_id = str((confirmed_baseline_ref or {}).get("baseline_id") or "").strip()
+        confirmed_baseline_rel_path = str(
+            (confirmed_baseline_ref or {}).get("baseline_root_rel_path") or ""
+        ).strip()
+        prebound_baseline_ready = bool(
+            requested_baseline_id
+            and confirmed_baseline_id
+            and requested_baseline_id == confirmed_baseline_id
+            and str(snapshot.get("baseline_gate") or "").strip().lower() == "confirmed"
+        )
         lines = [
+            f"- baseline_gate: {snapshot.get('baseline_gate') or 'pending'}",
             f"- active_baseline_id: {snapshot.get('active_baseline_id') or 'none'}",
             f"- active_baseline_variant_id: {snapshot.get('active_baseline_variant_id') or 'none'}",
+            f"- requested_baseline_ref: {json.dumps(requested_baseline_ref, ensure_ascii=False, sort_keys=True) if requested_baseline_ref else 'none'}",
+            f"- startup_contract: {json.dumps(startup_contract, ensure_ascii=False, sort_keys=True) if startup_contract else 'none'}",
+            f"- confirmed_baseline_ref: {json.dumps(confirmed_baseline_ref, ensure_ascii=False, sort_keys=True) if confirmed_baseline_ref else 'none'}",
+            f"- confirmed_baseline_import_root: {confirmed_baseline_rel_path or 'none'}",
+            f"- prebound_baseline_ready: {prebound_baseline_ready}",
             f"- active_run_id: {snapshot.get('active_run_id') or 'none'}",
             f"- research_head_branch: {snapshot.get('research_head_branch') or 'none'}",
             f"- research_head_worktree_root: {snapshot.get('research_head_worktree_root') or 'none'}",
@@ -219,6 +252,14 @@ class PromptBuilder:
             f"- bound_conversations: {', '.join(snapshot.get('bound_conversations') or []) or 'none'}",
             f"- cloud_linked: {snapshot.get('cloud', {}).get('linked', False)}",
         ]
+        if prebound_baseline_ready and confirmed_baseline_rel_path:
+            lines.extend(
+                [
+                    "- prebound_baseline_execution_policy: runtime already attached and confirmed the requested baseline before this turn.",
+                    f"- prebound_baseline_runtime_path: {confirmed_baseline_rel_path}",
+                    "- prebound_baseline_agent_rule: do not redo baseline discovery or reproduction unless you find a concrete incompatibility, corruption, or missing evidence problem.",
+                ]
+            )
         active_workspace_root = Path(str(snapshot.get("current_workspace_root") or quest_root))
         attachment_root = active_workspace_root / "baselines" / "imported"
         if attachment_root.exists():
@@ -310,13 +351,14 @@ class PromptBuilder:
         else:
             lines.append("- none")
 
-        lines.extend(["", "Published baselines:"])
+        lines.extend(["", "Reusable baselines:"])
         baseline_entries = self.baseline_registry.list_entries()[-5:]
         if baseline_entries:
             for entry in baseline_entries:
                 baseline_id = entry.get("baseline_id") or entry.get("entry_id") or "unknown-baseline"
                 summary = entry.get("summary") or entry.get("task") or "No summary provided."
-                lines.append(f"- {baseline_id}: {summary}")
+                status = str(entry.get("status") or "unknown").strip() or "unknown"
+                lines.append(f"- {baseline_id} [{status}]: {summary}")
         else:
             lines.append("- none")
         return "\n".join(lines)

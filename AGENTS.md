@@ -22,7 +22,7 @@ The target is a focused core runtime, not a large product platform.
 - If older comments, prompts, or README text mention those deleted files, treat them as historical references, not current instructions.
 - Start with the files that actually exist in this checkout:
   - `README.md`
-  - `docs/TUI_USAGE.md`
+  - `docs/en/TUI_USAGE.md`
   - `src/deepscientist/`
   - `src/prompts/`
   - `src/skills/`
@@ -282,7 +282,7 @@ Do not move these casually. Update services, API handlers, UI, TUI, and tests to
 
 ## Mailbox And Interaction Rules
 
-The current runtime behavior in code and `docs/TUI_USAGE.md` is:
+The current runtime behavior in code and `docs/en/TUI_USAGE.md` is:
 
 1. The first plain user message for an idle quest may start a turn directly.
 2. Later user messages while a run is active are queued in `.ds/user_message_queue.json`.
@@ -413,7 +413,7 @@ When changing runner support:
 
 - Current repo entry points:
   - `README.md`
-  - `docs/TUI_USAGE.md`
+  - `docs/en/TUI_USAGE.md`
   - `src/deepscientist/cli.py`
   - `src/deepscientist/daemon/app.py`
   - `src/deepscientist/mcp/server.py`
@@ -457,7 +457,7 @@ When changing runner support:
 
 ## When Editing This Repo
 
-- Read the files that currently exist first: `README.md`, `docs/TUI_USAGE.md`, and the relevant code.
+- Read the files that currently exist first: `README.md`, `docs/en/TUI_USAGE.md`, and the relevant code.
 - Do not tell contributors to read deleted `docs/CORE_BLUEPRINT.md`-style files.
 - Keep the quest-per-repo model consistent everywhere.
 - Keep `memory`, `artifact`, and `bash_exec` as the durable built-in MCP contract.

@@ -100,6 +100,15 @@ function canonicalToolFunction(
     return `mcp__${normalizeToolSegment(mcpServer)}__${normalizeToolSegment(mcpTool)}`
   }
   const normalized = normalizeToolSegment(toolName)
+  if (toolName) {
+    const raw = toolName.trim().toLowerCase()
+    for (const prefix of ['memory', 'artifact', 'bash_exec']) {
+      if (raw.startsWith(`${prefix}.`)) {
+        const suffix = raw.slice(prefix.length + 1)
+        return `mcp__${normalizeToolSegment(prefix)}__${normalizeToolSegment(suffix)}`
+      }
+    }
+  }
   if (normalized === 'shell_command') return 'shell_exec'
   if (normalized === 'web_fetch') return 'webfetch'
   if (normalized === 'web_search' || normalized === 'websearch') return 'web_search'
@@ -292,8 +301,25 @@ function normalizeQuestToolEvent(
 ): AgentSSEEvent | null {
   const dataRecord = asRecord(update.data)
   const rawToolName = asString(dataRecord?.tool_name)
-  const mcpServer = asString(dataRecord?.mcp_server)
-  const mcpTool = asString(dataRecord?.mcp_tool)
+  const derivedIdentity = (() => {
+    const explicitServer = asString(dataRecord?.mcp_server)
+    const explicitTool = asString(dataRecord?.mcp_tool)
+    if (explicitServer || explicitTool) {
+      return { mcpServer: explicitServer, mcpTool: explicitTool }
+    }
+    const raw = (rawToolName || '').trim().toLowerCase()
+    for (const prefix of ['memory', 'artifact', 'bash_exec']) {
+      if (raw.startsWith(`${prefix}.`)) {
+        return {
+          mcpServer: prefix,
+          mcpTool: raw.slice(prefix.length + 1),
+        }
+      }
+    }
+    return { mcpServer: undefined, mcpTool: undefined }
+  })()
+  const mcpServer = derivedIdentity.mcpServer
+  const mcpTool = derivedIdentity.mcpTool
   const rawMetadata = asRecord(dataRecord?.metadata) ?? {}
   const metadata: EventMetadata = buildEventMetadata(questId, sessionId, {
     ...rawMetadata,

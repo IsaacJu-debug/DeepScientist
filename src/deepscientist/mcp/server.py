@@ -15,11 +15,25 @@ def build_memory_server(context: McpContext) -> FastMCP:
     service = MemoryService(context.home)
     server = FastMCP(
         "memory",
-        instructions="Quest-aware DeepScientist memory namespace. Prefer quest-local scope when quest context exists.",
+        instructions=(
+            "Quest-aware DeepScientist memory namespace. "
+            "Use list_recent to recover context at turn start or resume, "
+            "search before repeating literature/debug work, "
+            "read only the few selected cards that matter now, "
+            "write durable findings instead of chat transcripts, "
+            "and promote_to_global only for stable cross-quest lessons. "
+            "Prefer quest-local scope when quest context exists."
+        ),
         log_level="ERROR",
     )
 
-    @server.tool(name="write", description="Write a Markdown memory card with YAML frontmatter.")
+    @server.tool(
+        name="write",
+        description=(
+            "Write a Markdown memory card with YAML frontmatter. "
+            "Use after a non-trivial paper finding, reusable lesson, failure pattern, or idea rationale that should survive beyond chat."
+        ),
+    )
     def write(
         kind: str,
         title: str,
@@ -44,7 +58,13 @@ def build_memory_server(context: McpContext) -> FastMCP:
             metadata=metadata,
         )
 
-    @server.tool(name="read", description="Read a memory card by id or path.")
+    @server.tool(
+        name="read",
+        description=(
+            "Read a memory card by id or path. "
+            "Use after list_recent or search surfaced a specific card worth reusing now."
+        ),
+    )
     def read(
         card_id: str | None = None,
         path: str | None = None,
@@ -55,7 +75,13 @@ def build_memory_server(context: McpContext) -> FastMCP:
         quest_root = context.require_quest_root() if resolved_scope == "quest" else None
         return service.read_card(card_id=card_id, path=path, scope=resolved_scope, quest_root=quest_root)
 
-    @server.tool(name="search", description="Search memory cards by metadata or body text.")
+    @server.tool(
+        name="search",
+        description=(
+            "Search memory cards by metadata or body text. "
+            "Use before broad literature search, retries, route decisions, or repeated debugging."
+        ),
+    )
     def search(
         query: str,
         scope: str = "quest",
@@ -68,7 +94,13 @@ def build_memory_server(context: McpContext) -> FastMCP:
         items = service.search(query, scope=resolved_scope, quest_root=quest_root, limit=limit, kind=kind)
         return {"ok": True, "count": len(items), "items": items}
 
-    @server.tool(name="list_recent", description="List recent memory cards.")
+    @server.tool(
+        name="list_recent",
+        description=(
+            "List the most recently updated memory cards. "
+            "Use to recover quest context at turn start, after resume, or after a long pause."
+        ),
+    )
     def list_recent(
         scope: str = "quest",
         limit: int = 10,
@@ -85,7 +117,13 @@ def build_memory_server(context: McpContext) -> FastMCP:
             items = service.list_recent(scope=resolved_scope, quest_root=quest_root, limit=limit, kind=kind)
         return {"ok": True, "count": len(items), "items": items}
 
-    @server.tool(name="promote_to_global", description="Promote a quest memory card into global memory.")
+    @server.tool(
+        name="promote_to_global",
+        description=(
+            "Promote a quest memory card into global memory. "
+            "Use only for stable, cross-quest reusable lessons."
+        ),
+    )
     def promote_to_global(
         card_id: str | None = None,
         path: str | None = None,
@@ -100,7 +138,11 @@ def build_artifact_server(context: McpContext) -> FastMCP:
     service = ArtifactService(context.home)
     server = FastMCP(
         "artifact",
-        instructions="Quest-aware DeepScientist artifact namespace. Git behavior is exposed through artifact only.",
+        instructions=(
+            "Quest-aware DeepScientist artifact namespace. "
+            "Use artifact as the quest control plane for ideas, branches, worktrees, decisions, progress, run records, reports, approvals, and user interaction state. "
+            "Git behavior is exposed through artifact only."
+        ),
         log_level="ERROR",
     )
 
@@ -326,6 +368,55 @@ def build_artifact_server(context: McpContext) -> FastMCP:
         return service.attach_baseline(context.require_quest_root(), baseline_id, variant_id)
 
     @server.tool(
+        name="confirm_baseline",
+        description=(
+            "Confirm the active quest baseline and open the stage gate into idea work. "
+            "The baseline path must point at a quest-local baseline under baselines/local or baselines/imported."
+        ),
+    )
+    def confirm_baseline(
+        baseline_path: str,
+        baseline_id: str | None = None,
+        variant_id: str | None = None,
+        summary: str | None = None,
+        baseline_kind: str | None = None,
+        metric_contract: dict[str, Any] | None = None,
+        metrics_summary: dict[str, Any] | None = None,
+        primary_metric: dict[str, Any] | None = None,
+        auto_advance: bool = True,
+        comment: str | dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return service.confirm_baseline(
+            context.require_quest_root(),
+            baseline_path=baseline_path,
+            comment=comment,
+            baseline_id=baseline_id,
+            variant_id=variant_id,
+            summary=summary,
+            baseline_kind=baseline_kind,
+            metric_contract=metric_contract,
+            metrics_summary=metrics_summary,
+            primary_metric=primary_metric,
+            auto_advance=auto_advance,
+        )
+
+    @server.tool(
+        name="waive_baseline",
+        description="Explicitly waive the baseline gate and advance with a durable written reason.",
+    )
+    def waive_baseline(
+        reason: str,
+        auto_advance: bool = True,
+        comment: str | dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return service.waive_baseline(
+            context.require_quest_root(),
+            reason=reason,
+            comment=comment,
+            auto_advance=auto_advance,
+        )
+
+    @server.tool(
         name="arxiv",
         description=(
             "Read an identified arXiv paper by id. "
@@ -397,7 +488,10 @@ def build_bash_exec_server(context: McpContext) -> FastMCP:
     service = BashExecService(context.home)
     server = FastMCP(
         "bash_exec",
-        instructions="Quest-aware DeepScientist bash execution namespace with detached execution, durable logs, and progress tracking.",
+        instructions=(
+            "Quest-aware DeepScientist bash execution namespace with detached execution, durable logs, and progress tracking. "
+            "Use bash_exec when commands should be monitored, revisited from logs, stopped later, or resumed after interruption."
+        ),
         log_level="ERROR",
     )
 

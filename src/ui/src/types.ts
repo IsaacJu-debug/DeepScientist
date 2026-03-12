@@ -40,8 +40,24 @@ export interface QuestSummary {
   created_at?: string
   updated_at?: string
   quest_root?: string
+  bound_conversations?: string[]
+  baseline_gate?: string | null
   active_baseline_id?: string | null
   active_baseline_variant_id?: string | null
+  requested_baseline_ref?: {
+    baseline_id?: string | null
+    variant_id?: string | null
+  } | null
+  startup_contract?: Record<string, unknown> | null
+  confirmed_baseline_ref?: {
+    baseline_id?: string | null
+    variant_id?: string | null
+    baseline_path?: string | null
+    baseline_root_rel_path?: string | null
+    source_mode?: string | null
+    confirmed_at?: string | null
+    comment?: unknown
+  } | null
   active_run_id?: string | null
   history_count?: number
   artifact_count?: number
@@ -79,6 +95,39 @@ export interface QuestSummary {
   paths?: Record<string, string | null | undefined>
   recent_artifacts?: RecentArtifact[]
   recent_runs?: RecentRun[]
+}
+
+export type BaselineRegistryVariant = {
+  variant_id: string
+  label?: string | null
+  summary?: string | null
+  path?: string | null
+  metrics_summary?: Record<string, unknown> | null
+}
+
+export type BaselineRegistryEntry = {
+  registry_kind?: string | null
+  schema_version?: number | null
+  entry_id?: string | null
+  baseline_id: string
+  status?: string | null
+  summary?: string | null
+  task?: string | null
+  path?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  confirmed_at?: string | null
+  source_mode?: string | null
+  source_quest_id?: string | null
+  source_baseline_path?: string | null
+  selected_variant_id?: string | null
+  materializable?: boolean | null
+  availability?: string | null
+  primary_metric?: Record<string, unknown> | null
+  baseline_variants?: BaselineRegistryVariant[] | null
+  default_variant_id?: string | null
+  metric_contract?: Record<string, unknown> | null
+  metrics_summary?: Record<string, unknown> | null
 }
 
 export interface ConnectorSnapshot {

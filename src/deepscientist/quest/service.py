@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import subprocess
 import json
@@ -8,6 +9,11 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None
 
 from ..artifact.metrics import build_metrics_timeline, normalize_metrics_summary
 from ..connector_runtime import conversation_identity_key, normalize_conversation_id
@@ -27,6 +33,9 @@ from .layout import (
 from .node_traces import QuestNodeTraceManager
 
 _UNSET = object()
+_NUMERIC_QUEST_ID_PATTERN = re.compile(r"^\d{1,10}$")
+_MAX_NUMERIC_QUEST_ID_VALUE = 9_999_999_999
+_NUMERIC_QUEST_ID_PAD_WIDTH = 3
 
 
 class QuestService:
@@ -37,6 +46,35 @@ class QuestService:
 
     def _quest_root(self, quest_id: str) -> Path:
         return self.quests_root / quest_id
+
+    @staticmethod
+    def _quest_yaml_path(quest_root: Path) -> Path:
+        return quest_root / "quest.yaml"
+
+    def _quest_id_state_path(self) -> Path:
+        return self.home / "runtime" / "quest_id_state.json"
+
+    def _quest_id_lock_path(self) -> Path:
+        return self.home / "runtime" / "quest_id_state.lock"
+
+    @staticmethod
+    def _normalize_baseline_gate(value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"pending", "confirmed", "waived"}:
+            raise ValueError("`baseline_gate` must be one of: pending, confirmed, waived.")
+        return normalized
+
+    def read_quest_yaml(self, quest_root: Path) -> dict[str, Any]:
+        payload = read_yaml(self._quest_yaml_path(quest_root), {})
+        if not isinstance(payload, dict):
+            payload = {}
+        normalized = dict(payload)
+        normalized.setdefault("active_anchor", "baseline")
+        normalized.setdefault("baseline_gate", "pending")
+        normalized.setdefault("confirmed_baseline_ref", None)
+        normalized.setdefault("requested_baseline_ref", None)
+        normalized.setdefault("startup_contract", None)
+        return normalized
 
     @staticmethod
     def _research_state_path(quest_root: Path) -> Path:
@@ -209,14 +247,118 @@ class QuestService:
             result["delta_vs_baseline"] = progress_eval.get("delta_vs_baseline")
         return result
 
-    def _normalize_quest_id(self, quest_id: str | None) -> str:
+    @staticmethod
+    def _parse_numeric_quest_id(value: str | None) -> int | None:
+        raw = str(value or "").strip()
+        if not _NUMERIC_QUEST_ID_PATTERN.fullmatch(raw):
+            return None
+        numeric_value = int(raw)
+        if numeric_value < 1 or numeric_value > _MAX_NUMERIC_QUEST_ID_VALUE:
+            return None
+        return numeric_value
+
+    @staticmethod
+    def _format_numeric_quest_id(value: int) -> str:
+        if value < 1:
+            raise ValueError("Sequential quest ids must be positive integers.")
+        text = str(value)
+        if len(text) > 10:
+            raise ValueError("Sequential quest ids support at most 10 digits.")
+        if len(text) >= _NUMERIC_QUEST_ID_PAD_WIDTH:
+            return text
+        return text.zfill(_NUMERIC_QUEST_ID_PAD_WIDTH)
+
+    @contextmanager
+    def _quest_id_state_lock(self):
+        lock_path = self._quest_id_lock_path()
+        ensure_dir(lock_path.parent)
+        with lock_path.open("a+", encoding="utf-8") as handle:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    def _scan_next_numeric_quest_id(self) -> int:
+        max_numeric_id = 0
+        if not self.quests_root.exists():
+            return 1
+        for quest_root in sorted(self.quests_root.iterdir()):
+            if not quest_root.is_dir():
+                continue
+            numeric_value = self._parse_numeric_quest_id(quest_root.name)
+            if numeric_value is None:
+                continue
+            max_numeric_id = max(max_numeric_id, numeric_value)
+        return max_numeric_id + 1
+
+    def _read_quest_id_state_locked(self) -> dict[str, Any]:
+        state_path = self._quest_id_state_path()
+        scanned_next_numeric_id = self._scan_next_numeric_quest_id()
+        payload = read_json(state_path, {})
+        should_write = not state_path.exists()
+        if not isinstance(payload, dict):
+            payload = {}
+            should_write = True
+        next_numeric_id = payload.get("next_numeric_id")
+        if isinstance(next_numeric_id, str) and next_numeric_id.isdigit():
+            next_numeric_id = int(next_numeric_id)
+        if not isinstance(next_numeric_id, int) or next_numeric_id < 1:
+            next_numeric_id = scanned_next_numeric_id
+            should_write = True
+        elif next_numeric_id < scanned_next_numeric_id:
+            next_numeric_id = scanned_next_numeric_id
+            should_write = True
+        state = {
+            "version": 1,
+            "next_numeric_id": next_numeric_id,
+            "updated_at": str(payload.get("updated_at") or utc_now()),
+        }
+        if payload.get("version") != 1:
+            should_write = True
+        if should_write:
+            state["updated_at"] = utc_now()
+            write_json(state_path, state)
+        return state
+
+    def _write_quest_id_state_locked(self, next_numeric_id: int) -> None:
+        write_json(
+            self._quest_id_state_path(),
+            {
+                "version": 1,
+                "next_numeric_id": next_numeric_id,
+                "updated_at": utc_now(),
+            },
+        )
+
+    def _allocate_next_numeric_quest_id(self) -> str:
+        with self._quest_id_state_lock():
+            state = self._read_quest_id_state_locked()
+            next_numeric_id = int(state.get("next_numeric_id") or 1)
+            quest_id = self._format_numeric_quest_id(next_numeric_id)
+            self._write_quest_id_state_locked(next_numeric_id + 1)
+            return quest_id
+
+    def _reserve_numeric_quest_id(self, quest_id: str) -> None:
+        numeric_value = self._parse_numeric_quest_id(quest_id)
+        if numeric_value is None:
+            return
+        with self._quest_id_state_lock():
+            state = self._read_quest_id_state_locked()
+            next_numeric_id = max(int(state.get("next_numeric_id") or 1), numeric_value + 1)
+            if next_numeric_id != int(state.get("next_numeric_id") or 1):
+                self._write_quest_id_state_locked(next_numeric_id)
+
+    def _normalize_quest_id(self, quest_id: str | None) -> tuple[str, bool]:
         raw = str(quest_id or "").strip().lower()
         if not raw:
-          return generate_id("q")
+            return self._allocate_next_numeric_quest_id(), True
         slug = re.sub(r"[^a-z0-9._-]+", "-", raw).strip("._-")
         if not slug:
-            return generate_id("q")
-        return slug[:80]
+            return self._allocate_next_numeric_quest_id(), True
+        return slug[:80], False
 
     def create(
         self,
@@ -224,15 +366,31 @@ class QuestService:
         quest_id: str | None = None,
         runner: str = "codex",
         title: str | None = None,
+        *,
+        requested_baseline_ref: dict[str, Any] | None = None,
+        startup_contract: dict[str, Any] | None = None,
     ) -> dict:
-        quest_id = self._normalize_quest_id(quest_id)
+        quest_id, auto_generated = self._normalize_quest_id(quest_id)
         quest_root = self._quest_root(quest_id)
         if quest_root.exists():
             raise FileExistsError(f"Quest already exists: {quest_id}")
+        if not auto_generated:
+            self._reserve_numeric_quest_id(quest_id)
         ensure_dir(quest_root)
         for relative in QUEST_DIRECTORIES:
             ensure_dir(quest_root / relative)
-        write_yaml(quest_root / "quest.yaml", initial_quest_yaml(quest_id, goal, quest_root, runner, title=title))
+        write_yaml(
+            self._quest_yaml_path(quest_root),
+            initial_quest_yaml(
+                quest_id,
+                goal,
+                quest_root,
+                runner,
+                title=title,
+                requested_baseline_ref=dict(requested_baseline_ref) if isinstance(requested_baseline_ref, dict) else None,
+                startup_contract=dict(startup_contract) if isinstance(startup_contract, dict) else None,
+            ),
+        )
         write_text(quest_root / "brief.md", initial_brief(goal))
         write_text(quest_root / "plan.md", initial_plan())
         write_text(quest_root / "status.md", initial_status())
@@ -261,7 +419,7 @@ class QuestService:
         quest_root = self._quest_root(quest_id)
         workspace_root = self.active_workspace_root(quest_root)
         research_state = self.read_research_state(quest_root)
-        quest_yaml = read_yaml(quest_root / "quest.yaml", {})
+        quest_yaml = self.read_quest_yaml(quest_root)
         graph_dir = quest_root / "artifacts" / "graphs"
         graph_svg = graph_dir / "git-graph.svg"
         history = read_jsonl(quest_root / ".ds" / "conversations" / "main.jsonl")
@@ -345,6 +503,10 @@ class QuestService:
         if attachment:
             active_baseline_id = attachment.get("source_baseline_id")
             active_baseline_variant_id = attachment.get("source_variant_id")
+        elif isinstance(quest_yaml.get("confirmed_baseline_ref"), dict):
+            confirmed_ref = dict(quest_yaml.get("confirmed_baseline_ref") or {})
+            active_baseline_id = confirmed_ref.get("baseline_id")
+            active_baseline_variant_id = confirmed_ref.get("variant_id")
         status_line = "Quest created."
         status_text = read_text(quest_root / "status.md").strip().splitlines()
         if status_text:
@@ -410,6 +572,10 @@ class QuestService:
             "runtime_status": runtime_state.get("status") or quest_yaml.get("status", "idle"),
             "display_status": runtime_state.get("display_status") or runtime_state.get("status") or quest_yaml.get("status", "idle"),
             "active_anchor": quest_yaml.get("active_anchor", "baseline"),
+            "baseline_gate": quest_yaml.get("baseline_gate", "pending"),
+            "confirmed_baseline_ref": quest_yaml.get("confirmed_baseline_ref"),
+            "requested_baseline_ref": quest_yaml.get("requested_baseline_ref"),
+            "startup_contract": quest_yaml.get("startup_contract"),
             "runner": quest_yaml.get("default_runner", "codex"),
             "active_workspace_root": str(workspace_root),
             "research_head_branch": research_state.get("research_head_branch"),
@@ -425,7 +591,7 @@ class QuestService:
             "workspace_mode": research_state.get("workspace_mode") or "quest",
             "active_baseline_id": active_baseline_id,
             "active_baseline_variant_id": active_baseline_variant_id,
-            "active_run_id": runtime_state.get("active_run_id") or quest_yaml.get("active_run_id"),
+            "active_run_id": runtime_state.get("active_run_id"),
             "pending_decisions": pending_decisions,
             "active_interactions": active_interactions,
             "recent_reply_threads": recent_reply_threads,
@@ -621,7 +787,8 @@ class QuestService:
         if role == "user":
             self._enqueue_user_message(quest_root, record)
             quest_data = read_yaml(quest_root / "quest.yaml", {})
-            status = str(quest_data.get("status") or "")
+            runtime_state = self._read_runtime_state(quest_root)
+            status = str(runtime_state.get("status") or quest_data.get("status") or "")
             next_status = status
             if status == "waiting_for_user":
                 interaction_state = read_json(quest_root / ".ds" / "interaction_state.json", {"open_requests": []})
@@ -707,6 +874,50 @@ class QuestService:
             write_json(bindings_path, bindings)
         return bindings
 
+    def binding_sources(self, quest_id: str) -> list[str]:
+        quest_root = self._quest_root(quest_id)
+        bindings_path = quest_root / ".ds" / "bindings.json"
+        bindings = read_json(bindings_path, {"sources": ["local:default"]})
+        sources = [self._normalize_binding_source(item) for item in (bindings.get("sources") or [])]
+        return [item for item in sources if item]
+
+    def set_binding_sources(self, quest_id: str, sources: list[str]) -> dict:
+        quest_root = self._quest_root(quest_id)
+        bindings_path = quest_root / ".ds" / "bindings.json"
+        normalized_sources = [self._normalize_binding_source(item) for item in sources]
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for item in normalized_sources:
+            key = conversation_identity_key(item)
+            if not item or key in seen:
+                continue
+            seen.add(key)
+            ordered.append(item)
+        payload = {"sources": ordered}
+        write_json(bindings_path, payload)
+        return payload
+
+    def unbind_source(self, quest_id: str, source: str) -> dict:
+        quest_root = self._quest_root(quest_id)
+        bindings_path = quest_root / ".ds" / "bindings.json"
+        bindings = read_json(bindings_path, {"sources": []})
+        normalized_source = self._normalize_binding_source(source)
+        normalized_key = conversation_identity_key(normalized_source)
+        changed = False
+        sources: list[str] = []
+        for item in list(bindings.get("sources") or []):
+            existing = self._normalize_binding_source(str(item))
+            if conversation_identity_key(existing) == normalized_key:
+                changed = True
+                continue
+            sources.append(existing)
+            if existing != item:
+                changed = True
+        if changed:
+            bindings["sources"] = sources
+            write_json(bindings_path, bindings)
+        return bindings
+
     def set_status(self, quest_id: str, status: str) -> dict:
         quest_root = self._quest_root(quest_id)
         self.update_runtime_state(
@@ -725,11 +936,11 @@ class QuestService:
         default_runner: str | None = None,
     ) -> dict:
         quest_root = self._quest_root(quest_id)
-        quest_yaml_path = quest_root / "quest.yaml"
+        quest_yaml_path = self._quest_yaml_path(quest_root)
         if not quest_yaml_path.exists():
             raise FileNotFoundError(f"Unknown quest `{quest_id}`.")
 
-        quest_data = read_yaml(quest_yaml_path, {})
+        quest_data = self.read_quest_yaml(quest_root)
         changed = False
 
         if title is not None:
@@ -772,6 +983,84 @@ class QuestService:
             write_yaml(quest_yaml_path, quest_data)
 
         return self.snapshot(quest_id)
+
+    def update_baseline_state(
+        self,
+        quest_root: Path,
+        *,
+        baseline_gate: str | None = None,
+        confirmed_baseline_ref: dict[str, Any] | None | object = _UNSET,
+        active_anchor: str | None | object = _UNSET,
+    ) -> dict[str, Any]:
+        quest_yaml_path = self._quest_yaml_path(quest_root)
+        if not quest_yaml_path.exists():
+            raise FileNotFoundError(f"Unknown quest `{quest_root.name}`.")
+
+        quest_data = self.read_quest_yaml(quest_root)
+        changed = False
+
+        if baseline_gate is not None:
+            normalized_gate = self._normalize_baseline_gate(baseline_gate)
+            if quest_data.get("baseline_gate") != normalized_gate:
+                quest_data["baseline_gate"] = normalized_gate
+                changed = True
+
+        if confirmed_baseline_ref is not _UNSET:
+            normalized_ref = dict(confirmed_baseline_ref) if isinstance(confirmed_baseline_ref, dict) else None
+            if quest_data.get("confirmed_baseline_ref") != normalized_ref:
+                quest_data["confirmed_baseline_ref"] = normalized_ref
+                changed = True
+
+        if active_anchor is not _UNSET:
+            normalized_anchor = str(active_anchor or "").strip()
+            if not normalized_anchor:
+                raise ValueError("`active_anchor` cannot be empty.")
+            from ..prompts.builder import STANDARD_SKILLS
+
+            if normalized_anchor not in STANDARD_SKILLS:
+                allowed = ", ".join(STANDARD_SKILLS)
+                raise ValueError(f"Unsupported active anchor `{normalized_anchor}`. Allowed values: {allowed}.")
+            if quest_data.get("active_anchor") != normalized_anchor:
+                quest_data["active_anchor"] = normalized_anchor
+                changed = True
+
+        if changed:
+            quest_data["updated_at"] = utc_now()
+            write_yaml(quest_yaml_path, quest_data)
+        return quest_data
+
+    def update_startup_context(
+        self,
+        quest_root: Path,
+        *,
+        requested_baseline_ref: dict[str, Any] | None | object = _UNSET,
+        startup_contract: dict[str, Any] | None | object = _UNSET,
+    ) -> dict[str, Any]:
+        quest_yaml_path = self._quest_yaml_path(quest_root)
+        if not quest_yaml_path.exists():
+            raise FileNotFoundError(f"Unknown quest `{quest_root.name}`.")
+
+        quest_data = self.read_quest_yaml(quest_root)
+        changed = False
+
+        if requested_baseline_ref is not _UNSET:
+            normalized_requested = (
+                dict(requested_baseline_ref) if isinstance(requested_baseline_ref, dict) else None
+            )
+            if quest_data.get("requested_baseline_ref") != normalized_requested:
+                quest_data["requested_baseline_ref"] = normalized_requested
+                changed = True
+
+        if startup_contract is not _UNSET:
+            normalized_contract = dict(startup_contract) if isinstance(startup_contract, dict) else None
+            if quest_data.get("startup_contract") != normalized_contract:
+                quest_data["startup_contract"] = normalized_contract
+                changed = True
+
+        if changed:
+            quest_data["updated_at"] = utc_now()
+            write_yaml(quest_yaml_path, quest_data)
+        return quest_data
 
     def reconcile_runtime_state(self) -> list[dict[str, Any]]:
         reconciled: list[dict[str, Any]] = []

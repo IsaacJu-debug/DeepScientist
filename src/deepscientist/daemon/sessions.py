@@ -31,3 +31,6 @@ class SessionStore:
             }
             for session in self._sessions.values()
         ]
+
+    def forget(self, quest_id: str) -> bool:
+        return self._sessions.pop(quest_id, None) is not None

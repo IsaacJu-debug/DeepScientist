@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -19,6 +20,7 @@ from ..channels.slack_socket import SlackSocketModeService
 from ..channels.telegram_polling import TelegramPollingService
 from ..channels.whatsapp_local_session import WhatsAppLocalSessionService
 from ..cloud import CloudLinkService
+from ..connector_runtime import conversation_identity_key, normalize_conversation_id, parse_conversation_id
 from ..config import ConfigManager
 from ..home import repo_root
 from ..memory import MemoryService
@@ -27,7 +29,7 @@ from ..prompts.builder import STANDARD_SKILLS
 from ..quest import QuestService
 from ..runners import CodexRunner, RunRequest, get_runner_factory, register_builtin_runners
 from ..runtime_logs import JsonlLogger
-from ..shared import append_jsonl, generate_id, read_json, read_jsonl, read_text, utc_now, which
+from ..shared import append_jsonl, generate_id, read_json, read_jsonl, read_text, resolve_within, utc_now, which
 from ..skills import SkillInstaller
 from ..team import SingleTeamService
 from .api import ApiHandlers, match_route
@@ -193,8 +195,54 @@ class DaemonApp:
         source: str = "local",
         announce_connector_binding: bool = True,
         exclude_conversation_id: str | None = None,
+        requested_baseline_ref: dict[str, object] | None = None,
+        startup_contract: dict[str, object] | None = None,
     ) -> dict:
-        snapshot = self.quest_service.create(goal=goal, title=title, quest_id=quest_id)
+        snapshot = self.quest_service.create(
+            goal=goal,
+            title=title,
+            quest_id=quest_id,
+            requested_baseline_ref=dict(requested_baseline_ref) if isinstance(requested_baseline_ref, dict) else None,
+            startup_contract=dict(startup_contract) if isinstance(startup_contract, dict) else None,
+        )
+        baseline_id = (
+            str((requested_baseline_ref or {}).get("baseline_id") or "").strip()
+            if isinstance(requested_baseline_ref, dict)
+            else ""
+        )
+        variant_id = (
+            str((requested_baseline_ref or {}).get("variant_id") or "").strip() or None
+            if isinstance(requested_baseline_ref, dict)
+            else None
+        )
+        if baseline_id:
+            try:
+                quest_root = Path(snapshot["quest_root"])
+                attachment = self.artifact_service.attach_baseline(quest_root, baseline_id, variant_id)
+                if not attachment.get("ok"):
+                    raise RuntimeError(
+                        str(attachment.get("message") or f"Unable to materialize requested baseline `{baseline_id}`.")
+                    )
+                self.artifact_service.confirm_baseline(
+                    quest_root,
+                    baseline_path=f"baselines/imported/{baseline_id}",
+                    baseline_id=baseline_id,
+                    variant_id=variant_id,
+                    summary=f"Baseline `{baseline_id}` confirmed during quest creation.",
+                )
+                snapshot = self.quest_service.snapshot(snapshot["quest_id"])
+            except Exception as exc:
+                shutil.rmtree(Path(snapshot["quest_root"]), ignore_errors=True)
+                self.logger.log(
+                    "warning",
+                    "quest.baseline_bootstrap_failed",
+                    quest_id=snapshot.get("quest_id"),
+                    baseline_id=baseline_id,
+                    message=str(exc),
+                )
+                raise RuntimeError(
+                    f"Quest creation failed because the requested baseline `{baseline_id}` could not be attached and confirmed: {exc}"
+                ) from exc
         self._auto_bind_connectors_to_latest_quest(
             snapshot["quest_id"],
             source=source,
@@ -873,6 +921,173 @@ class DaemonApp:
         channel = self._channel_with_bindings(connector_name)
         return channel.list_bindings()
 
+    def update_quest_binding(
+        self,
+        quest_id: str,
+        conversation_id: str | None,
+        *,
+        force: bool = False,
+    ) -> dict | tuple[int, dict]:
+        quest_root = self.home / "quests" / quest_id
+        if not quest_root.joinpath("quest.yaml").exists():
+            return 404, {"ok": False, "message": f"Unknown quest `{quest_id}`."}
+
+        normalized = normalize_conversation_id(conversation_id)
+        parsed = parse_conversation_id(normalized)
+
+        if parsed is None or parsed.get("connector", "").lower() == "local":
+            removed = self._unbind_external_bindings(quest_id)
+            self.quest_service.set_binding_sources(quest_id, ["local:default"])
+            snapshot = self.quest_service.snapshot(quest_id)
+            return {
+                "ok": True,
+                "quest_id": quest_id,
+                "conversation_id": None,
+                "snapshot": snapshot,
+                "removed_conversations": removed,
+            }
+
+        connector_name = str(parsed.get("connector") or "").strip().lower()
+        if connector_name not in self.channels or connector_name == "local":
+            return 400, {
+                "ok": False,
+                "message": f"Unknown connector `{connector_name}` for conversation `{normalized}`.",
+            }
+
+        channel = self._channel_with_bindings(connector_name)
+        conversation_key = conversation_identity_key(normalized)
+
+        titles = {
+            str(item.get("quest_id") or "").strip(): str(item.get("title") or "").strip() or None
+            for item in self.quest_service.list_quests()
+        }
+
+        conflicts: list[dict] = []
+        existing_bound = channel.resolve_bound_quest(normalized)
+        if existing_bound and existing_bound != quest_id:
+            conflicts.append(
+                {
+                    "quest_id": existing_bound,
+                    "title": titles.get(existing_bound),
+                    "reason": "connector_binding",
+                }
+            )
+
+        for item in self.quest_service.list_quests():
+            other_id = str(item.get("quest_id") or "").strip()
+            if not other_id or other_id == quest_id:
+                continue
+            sources = self.quest_service.binding_sources(other_id)
+            if any(conversation_identity_key(source) == conversation_key for source in sources):
+                conflicts.append(
+                    {
+                        "quest_id": other_id,
+                        "title": titles.get(other_id),
+                        "reason": "quest_binding",
+                    }
+                )
+
+        deduped_conflicts: list[dict] = []
+        seen_conflict_ids: set[str] = set()
+        for item in conflicts:
+            candidate = str(item.get("quest_id") or "").strip()
+            if not candidate or candidate in seen_conflict_ids:
+                continue
+            seen_conflict_ids.add(candidate)
+            deduped_conflicts.append(item)
+
+        if deduped_conflicts and not force:
+            return 409, {
+                "ok": False,
+                "conflict": True,
+                "message": "Conversation is already bound to another quest.",
+                "quest_id": quest_id,
+                "conversation_id": normalized,
+                "conflicts": deduped_conflicts,
+            }
+
+        for item in deduped_conflicts:
+            other_id = str(item.get("quest_id") or "").strip()
+            if other_id and other_id != quest_id:
+                self.quest_service.unbind_source(other_id, normalized)
+
+        removed = self._unbind_external_bindings(quest_id, preserve={normalized})
+        channel.bind_conversation(normalized, quest_id)
+        self.sessions.bind(quest_id, normalized)
+        self.quest_service.set_binding_sources(quest_id, ["local:default", normalized])
+        snapshot = self.quest_service.snapshot(quest_id)
+        return {
+            "ok": True,
+            "quest_id": quest_id,
+            "conversation_id": normalized,
+            "snapshot": snapshot,
+            "removed_conversations": removed,
+            "conflicts_resolved": [item.get("quest_id") for item in deduped_conflicts if item.get("quest_id")],
+        }
+
+    def delete_quest(self, quest_id: str, *, source: str = "web") -> dict | tuple[int, dict]:
+        quests_root = self.home / "quests"
+        try:
+            quest_root = resolve_within(quests_root, quest_id)
+        except ValueError:
+            return 400, {"ok": False, "message": "Invalid quest id."}
+        if not quest_root.joinpath("quest.yaml").exists():
+            return 404, {"ok": False, "message": f"Unknown quest `{quest_id}`."}
+
+        snapshot = self.quest_service.snapshot(quest_id)
+        runtime_status = str(snapshot.get("runtime_status") or snapshot.get("status") or "").strip().lower()
+        if runtime_status == "running" or snapshot.get("active_run_id"):
+            try:
+                self.stop_quest(quest_id, source=source)
+            except Exception:
+                pass
+
+        stopped_bash_sessions: list[str] = []
+        try:
+            for session in self.bash_exec_service.list_sessions(quest_root, limit=500):
+                status = str(session.get("status") or "").strip().lower()
+                if status in {"completed", "failed", "terminated"}:
+                    continue
+                bash_id = str(session.get("bash_id") or "").strip()
+                if not bash_id:
+                    continue
+                try:
+                    self.bash_exec_service.request_stop(
+                        quest_root,
+                        bash_id,
+                        reason="quest_deleted",
+                        user_id=source,
+                    )
+                    stopped_bash_sessions.append(bash_id)
+                except Exception:
+                    continue
+        except Exception:
+            stopped_bash_sessions = []
+
+        removed_conversations = self._unbind_external_bindings(quest_id)
+        self.sessions.forget(quest_id)
+
+        try:
+            shutil.rmtree(quest_root)
+        except FileNotFoundError:
+            return {"ok": True, "quest_id": quest_id, "deleted": False}
+
+        self.logger.log(
+            "info",
+            "quest.deleted",
+            quest_id=quest_id,
+            source=source,
+            removed_conversations=removed_conversations,
+            stopped_bash_sessions=stopped_bash_sessions,
+        )
+        return {
+            "ok": True,
+            "quest_id": quest_id,
+            "deleted": True,
+            "removed_conversations": removed_conversations,
+            "stopped_bash_sessions": stopped_bash_sessions,
+        }
+
     def handle_connector_inbound(self, connector_name: str, body: dict) -> dict:
         channel = self._channel_with_bindings(connector_name)
         ingested = channel.ingest(body)
@@ -989,9 +1204,7 @@ class DaemonApp:
                     announce_connector_binding=True,
                     exclude_conversation_id=conversation_id,
                 )
-                channel.bind_conversation(conversation_id, created["quest_id"])
-                self.sessions.bind(created["quest_id"], conversation_id)
-                self.quest_service.bind_source(created["quest_id"], conversation_id)
+                self.update_quest_binding(created["quest_id"], conversation_id, force=True)
                 return channel.send(
                     {
                         "conversation_id": conversation_id,
@@ -1013,8 +1226,8 @@ class DaemonApp:
                             "conversation_id": conversation_id,
                             "kind": "ack",
                             "message": self._polite_copy(
-                                zh="老师您好，请先提供 quest id，例如 `/use q-001`。",
-                                en="Please provide a quest id first, for example `/use q-001`.",
+                                zh="老师您好，请先提供 quest id，例如 `/use 001`。",
+                                en="Please provide a quest id first, for example `/use 001`.",
                             ),
                         }
                     )
@@ -1034,9 +1247,7 @@ class DaemonApp:
                             ),
                         }
                     )
-                channel.bind_conversation(conversation_id, target_quest)
-                self.sessions.bind(target_quest, conversation_id)
-                self.quest_service.bind_source(target_quest, conversation_id)
+                self.update_quest_binding(target_quest, conversation_id, force=True)
                 return channel.send(
                     {
                         "conversation_id": conversation_id,
@@ -1045,6 +1256,81 @@ class DaemonApp:
                         "message": self._polite_copy(
                             zh=f"老师，已将当前 {connector_label} 会话绑定到 {target_quest}，我会继续推进并同步计划。",
                             en=f"Received. I’ve bound this {connector_label} conversation to {target_quest} and will keep the plan moving.",
+                        ),
+                    }
+                )
+            if command_name == "delete":
+                if not args:
+                    return channel.send(
+                        {
+                            "conversation_id": conversation_id,
+                            "kind": "ack",
+                            "message": self._polite_copy(
+                                zh="老师您好，请先提供 quest id，例如 `/delete 001 --yes`（删除是危险操作，需要确认）。",
+                                en="Please provide a quest id, for example `/delete 001 --yes` (destructive; requires confirmation).",
+                            ),
+                        }
+                    )
+                target_quest = str(args[0] or "").strip()
+                if target_quest in {"latest", "newest"}:
+                    quests = self.quest_service.list_quests()
+                    target_quest = str(quests[0]["quest_id"]) if quests else ""
+                confirmed = any(str(item).strip().lower() in {"--yes", "--force", "-y"} for item in args[1:])
+                if not confirmed:
+                    return channel.send(
+                        {
+                            "conversation_id": conversation_id,
+                            "kind": "ack",
+                            "message": self._polite_copy(
+                                zh=f"即将删除 quest `{target_quest}`（不可恢复）。如确认，请发送：`/delete {target_quest} --yes`。",
+                                en=f"About to delete quest `{target_quest}` (irreversible). To confirm, send: `/delete {target_quest} --yes`.",
+                            ),
+                        }
+                    )
+                if not target_quest:
+                    return channel.send(
+                        {
+                            "conversation_id": conversation_id,
+                            "kind": "ack",
+                            "message": self._polite_copy(
+                                zh="老师您好，请先提供 quest id，例如 `/delete 001 --yes`。",
+                                en="Please provide a quest id, for example `/delete 001 --yes`.",
+                            ),
+                        }
+                    )
+                if not (self.home / "quests" / target_quest / "quest.yaml").exists():
+                    available = ", ".join(item["quest_id"] for item in self.quest_service.list_quests()[:6]) or "none"
+                    return channel.send(
+                        {
+                            "conversation_id": conversation_id,
+                            "kind": "ack",
+                            "message": self._polite_copy(
+                                zh=f"老师，目前没有找到 quest `{target_quest}`。可用 quest 包括：{available}。",
+                                en=f"I could not find quest `{target_quest}`. Available quests: {available}.",
+                            ),
+                        }
+                    )
+                delete_result = self.delete_quest(target_quest, source=f"{connector_name}:connector")
+                if isinstance(delete_result, tuple):
+                    _, payload = delete_result
+                    return channel.send(
+                        {
+                            "conversation_id": conversation_id,
+                            "kind": "ack",
+                            "message": str(payload.get("message") or "Failed to delete quest."),
+                        }
+                    )
+                follow_hint = self._polite_copy(
+                    zh="如需继续，请使用 `/projects` 查看列表，或 `/use latest` 绑定最新 quest。",
+                    en="To continue, use `/projects` to list quests, or `/use latest` to bind the newest quest.",
+                )
+                return channel.send(
+                    {
+                        "conversation_id": conversation_id,
+                        "kind": "quest_deleted",
+                        "message": self._polite_copy(
+                            zh=f"老师，已删除 quest `{target_quest}`。\n{follow_hint}",
+                            en=f"Deleted quest `{target_quest}`.\n{follow_hint}",
                         ),
                     }
                 )
@@ -1270,7 +1556,7 @@ class DaemonApp:
         announce: bool,
         exclude_conversation_id: str | None = None,
     ) -> list[str]:
-        bound_sources: list[str] = []
+        candidates: list[tuple[str, str]] = []
         for connector_name, channel in self.channels.items():
             if connector_name == "local":
                 continue
@@ -1284,24 +1570,38 @@ class DaemonApp:
             conversation_id = self._latest_connector_conversation_id(connector_name)
             if not conversation_id or conversation_id == exclude_conversation_id:
                 continue
+            candidates.append((connector_name, conversation_id))
+
+        if not candidates:
+            return []
+
+        routing = self.connectors_config.get("_routing") if isinstance(self.connectors_config.get("_routing"), dict) else {}
+        preferred = str(routing.get("primary_connector") or "").strip().lower()
+        selected = None
+        if preferred:
+            selected = next((item for item in candidates if item[0].lower() == preferred), None)
+        if selected is None:
+            selected = candidates[0]
+
+        connector_name, conversation_id = selected
+        result = self.update_quest_binding(quest_id, conversation_id, force=True)
+        if isinstance(result, tuple):
+            return []
+        bound_conversation = str(result.get("conversation_id") or "").strip() or conversation_id
+        if announce:
             channel = self._channel_with_bindings(connector_name)
-            channel.bind_conversation(conversation_id, quest_id)
-            self.sessions.bind(quest_id, conversation_id)
-            self.quest_service.bind_source(quest_id, conversation_id)
-            bound_sources.append(conversation_id)
-            if announce:
-                channel.send(
-                    {
-                        "conversation_id": conversation_id,
-                        "quest_id": quest_id,
-                        "kind": "ack",
-                        "message": self._polite_copy(
-                            zh=f"老师，系统刚刚创建了新的 quest `{quest_id}`，当前 {self._connector_label(connector_name)} 会话已自动切换并绑定到这个最新 quest。",
-                            en=f"A new quest `{quest_id}` was created. This {self._connector_label(connector_name)} conversation has been automatically rebound to the latest quest.",
-                        ),
-                    }
-                )
-        return bound_sources
+            channel.send(
+                {
+                    "conversation_id": bound_conversation,
+                    "quest_id": quest_id,
+                    "kind": "ack",
+                    "message": self._polite_copy(
+                        zh=f"老师，系统刚刚创建了新的 quest `{quest_id}`，当前 {self._connector_label(connector_name)} 会话已自动切换并绑定到这个最新 quest。",
+                        en=f"A new quest `{quest_id}` was created. This {self._connector_label(connector_name)} conversation has been automatically rebound to the latest quest.",
+                    ),
+                }
+            )
+        return [bound_conversation]
 
     def _latest_connector_conversation_id(self, connector_name: str) -> str:
         if connector_name == "qq":
@@ -1328,6 +1628,7 @@ class DaemonApp:
                 "- `/use <quest_id>`：绑定指定 quest\n"
                 "- `/use latest`：直接绑定当前最新 quest\n"
                 "- `/new <goal>`：新建一个 quest 并自动绑定当前会话\n"
+                "- `/delete <quest_id> --yes`：删除指定 quest（危险操作，需要确认）\n"
                 "如果直接输入普通文本，我会先返回这份帮助，而不会把文本投递给 agent。"
             ),
             en=(
@@ -1338,10 +1639,35 @@ class DaemonApp:
                 "- `/use <quest_id>`: bind a specific quest\n"
                 "- `/use latest`: bind the latest quest\n"
                 "- `/new <goal>`: create a new quest and bind this conversation\n"
+                "- `/delete <quest_id> --yes`: delete a quest (destructive; requires confirmation)\n"
                 "If you send plain text now, I will return this help message instead of forwarding the text to the agent."
             ),
         )
         return self._with_qq_main_chat_notice(message, body)
+
+    def _unbind_external_bindings(self, quest_id: str, *, preserve: set[str] | None = None) -> list[str]:
+        preserve_keys = {conversation_identity_key(item) for item in (preserve or set()) if item}
+        removed: list[str] = []
+        for connector_name in sorted(self.channels.keys()):
+            if connector_name == "local":
+                continue
+            try:
+                channel = self._channel_with_bindings(connector_name)
+            except Exception:
+                continue
+            for item in channel.list_bindings():
+                if str(item.get("quest_id") or "").strip() != quest_id:
+                    continue
+                conversation_id = str(item.get("conversation_id") or "").strip()
+                if not conversation_id:
+                    continue
+                if preserve_keys and conversation_identity_key(conversation_id) in preserve_keys:
+                    continue
+                if channel.unbind_conversation(conversation_id, quest_id=quest_id):
+                    removed.append(conversation_id)
+        for conversation_id in removed:
+            self.quest_service.unbind_source(quest_id, conversation_id)
+        return removed
 
     def _format_projects_list(self) -> str:
         quests = self.quest_service.list_quests()
@@ -1372,7 +1698,14 @@ class DaemonApp:
         channel = self.channels.get(name)
         if channel is None:
             raise KeyError(f"Unknown connector `{name}`.")
-        for attr in ("ingest", "bind_conversation", "resolve_bound_quest", "list_bindings", "command_prefix"):
+        for attr in (
+            "ingest",
+            "bind_conversation",
+            "unbind_conversation",
+            "resolve_bound_quest",
+            "list_bindings",
+            "command_prefix",
+        ):
             if not hasattr(channel, attr):
                 raise TypeError(f"Connector `{name}` does not implement `{attr}`.")
         return channel
@@ -1946,6 +2279,9 @@ class DaemonApp:
             def do_PATCH(self) -> None:  # noqa: N802
                 self._dispatch("PATCH")
 
+            def do_DELETE(self) -> None:  # noqa: N802
+                self._dispatch("DELETE")
+
             def _dispatch(self, method: str) -> None:
                 parsed = urlparse(self.path)
                 route_name, params = match_route(method, parsed.path)
@@ -2022,7 +2358,7 @@ class DaemonApp:
                             headers=dict(self.headers.items()),
                             body=body,
                         )
-                    elif route_name in {"document_open", "document_asset_upload", "chat", "command", "quest_control", "config_save", "quest_create", "run_create", "qq_inbound", "connector_inbound", "docs_open", "admin_shutdown", "bash_stop", "quest_settings", "terminal_session_ensure", "terminal_input"}:
+                    elif route_name in {"document_open", "document_asset_upload", "chat", "command", "quest_control", "config_save", "quest_create", "quest_baseline_binding", "run_create", "qq_inbound", "connector_inbound", "docs_open", "admin_shutdown", "bash_stop", "quest_settings", "quest_bindings", "quest_delete", "terminal_session_ensure", "terminal_input"}:
                         payload = result(**params, body=body)
                     elif route_name == "config_validate":
                         payload = result(body)

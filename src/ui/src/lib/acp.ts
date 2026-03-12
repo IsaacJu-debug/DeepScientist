@@ -84,6 +84,31 @@ function normalizeMetadata(value: unknown) {
   return value as Record<string, unknown>
 }
 
+function deriveMcpIdentity(
+  toolName?: string,
+  mcpServer?: string,
+  mcpTool?: string
+): { server?: string; tool?: string } {
+  const server = typeof mcpServer === 'string' && mcpServer.trim() ? mcpServer.trim() : ''
+  const tool = typeof mcpTool === 'string' && mcpTool.trim() ? mcpTool.trim() : ''
+  if (server || tool) {
+    return {
+      ...(server ? { server } : {}),
+      ...(tool ? { tool } : {}),
+    }
+  }
+  const normalized = (toolName || '').trim().toLowerCase()
+  for (const prefix of ['memory', 'artifact', 'bash_exec']) {
+    if (normalized.startsWith(`${prefix}.`)) {
+      return {
+        server: prefix,
+        tool: normalized.slice(prefix.length + 1),
+      }
+    }
+  }
+  return {}
+}
+
 function normalizeUpdate(raw: Record<string, unknown>): FeedItem {
   const eventType = String(raw.event_type ?? '')
   const data = (raw.data ?? {}) as Record<string, unknown>
@@ -99,8 +124,13 @@ function normalizeUpdate(raw: Record<string, unknown>): FeedItem {
     const args = stringifyToolPayload(data.args)
     const output = stringifyToolPayload(data.output)
     const metadata = normalizeMetadata(data.metadata)
-    const mcpServer = typeof data.mcp_server === 'string' ? data.mcp_server : undefined
-    const mcpTool = typeof data.mcp_tool === 'string' ? data.mcp_tool : undefined
+    const mcpIdentity = deriveMcpIdentity(
+      toolName,
+      typeof data.mcp_server === 'string' ? data.mcp_server : undefined,
+      typeof data.mcp_tool === 'string' ? data.mcp_tool : undefined
+    )
+    const mcpServer = mcpIdentity.server
+    const mcpTool = mcpIdentity.tool
     const subject = extractToolSubject(toolName, args, output)
     const comment = extractOperationComment({ args, output, metadata })
     const monitorFields = extractOperationMonitorFields({ metadata, comment })

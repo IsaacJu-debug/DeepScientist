@@ -167,7 +167,7 @@ function ensureDirectory(
   }
 }
 
-function flattenExplorerNodes(
+export function flattenQuestExplorerPayload(
   projectId: string,
   payload: ExplorerPayload
 ): FileTreeResponse {
@@ -248,7 +248,7 @@ async function loadQuestTree(projectId: string, force = false): Promise<FileTree
   }
 
   const explorer = await questClient.explorer(projectId)
-  const payload = flattenExplorerNodes(projectId, explorer)
+  const payload = flattenQuestExplorerPayload(projectId, explorer)
   treeCache.set(projectId, {
     expiresAt: Date.now() + TREE_CACHE_TTL_MS,
     payload,

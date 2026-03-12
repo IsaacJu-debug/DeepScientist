@@ -355,11 +355,21 @@ Weak campaign behavior:
 
 ## Memory rules
 
+Stage-start requirement:
+
+- begin every analysis campaign pass with `memory.list_recent(scope='quest', limit=5)`
+- then run at least one analysis-relevant `memory.search(...)` before launching or resuming slices
+- if several campaigns, parent runs, or idea lines exist, narrow retrieval to the current `campaign_id`, `parent_run_id`, `idea_id`, or `branch` instead of mixing unrelated slice memory
+
 Write to memory only when the campaign yields reusable lessons, such as:
 
 - robust failure patterns
 - evaluation caveats
 - reproducible sensitivity findings
+
+Stage-end requirement:
+
+- if the campaign produced a durable cross-slice lesson, failure pattern, or comparability caveat, write at least one `memory.write(...)` before leaving the stage
 
 The campaign’s main record belongs in run artifacts and the aggregated report.
 

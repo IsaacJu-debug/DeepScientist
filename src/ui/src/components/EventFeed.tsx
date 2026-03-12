@@ -15,6 +15,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { AgentCommentBlock } from '@/components/feed/AgentCommentBlock'
 import { QuestBashExecOperation } from '@/components/workspace/QuestBashExecOperation'
+import { QuestMcpOperation } from '@/components/workspace/QuestMcpOperation'
 import OrbitLogoStatus from '@/lib/plugins/ai-manus/components/OrbitLogoStatus'
 import { ThinkingIndicator } from '@/lib/plugins/ai-manus/components/ThinkingIndicator'
 import { buildToolOperationContent, extractToolSubject, toolTheme } from '@/lib/toolOperations'
@@ -36,6 +37,16 @@ function isBashExecOperation(item: Extract<FeedItem, { type: 'operation' }>) {
     item.mcpServer === 'bash_exec' ||
     toolName === 'bash_exec.bash_exec' ||
     toolName === 'bash_exec'
+  )
+}
+
+function isStructuredMcpOperation(item: Extract<FeedItem, { type: 'operation' }>) {
+  const toolName = (item.toolName || '').toLowerCase()
+  return (
+    item.mcpServer === 'memory' ||
+    item.mcpServer === 'artifact' ||
+    toolName.startsWith('memory.') ||
+    toolName.startsWith('artifact.')
   )
 }
 
@@ -355,6 +366,25 @@ function OperationBlock({
         monitorPlanSeconds={item.monitorPlanSeconds}
         monitorStepIndex={item.monitorStepIndex}
         nextCheckAfterSeconds={item.nextCheckAfterSeconds}
+      />
+    )
+  }
+  if (questId && isStructuredMcpOperation(item)) {
+    return (
+      <QuestMcpOperation
+        questId={questId}
+        itemId={item.id}
+        toolCallId={item.toolCallId}
+        toolName={item.toolName}
+        label={item.label}
+        status={item.status}
+        args={item.args}
+        output={item.output}
+        createdAt={item.createdAt}
+        metadata={item.metadata}
+        mcpServer={item.mcpServer}
+        mcpTool={item.mcpTool}
+        comment={item.comment}
       />
     )
   }

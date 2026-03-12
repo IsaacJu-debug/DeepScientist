@@ -36,6 +36,43 @@ export function parseMaybeJson(value: unknown): unknown {
   }
 }
 
+function extractTextEntryJson(content: unknown): unknown {
+  if (!Array.isArray(content)) return null
+  for (const entry of content) {
+    const record = asRecord(entry)
+    if (!record || record.type !== 'text' || typeof record.text !== 'string') continue
+    const parsed = parseMaybeJson(record.text)
+    if (parsed !== record.text) {
+      return parsed
+    }
+  }
+  return null
+}
+
+function unwrapResultCandidate(value: unknown, depth = 0): unknown {
+  if (depth > 4) return value
+  const parsed = parseMaybeJson(value)
+  const record = asRecord(parsed)
+  if (!record) return parsed
+
+  const nestedCandidates = [
+    record.structured_result,
+    record.structured_content,
+    record.result,
+    record.data,
+    record.payload,
+    extractTextEntryJson(record.content),
+  ]
+  for (const candidate of nestedCandidates) {
+    if (candidate == null || candidate === value || candidate === parsed) continue
+    const unwrapped = unwrapResultCandidate(candidate, depth + 1)
+    if (unwrapped != null) {
+      return unwrapped
+    }
+  }
+  return parsed
+}
+
 export function getToolArgsRecord(toolContent: ToolEventData): UnknownRecord {
   return asRecord(toolContent.args) ?? {}
 }
@@ -54,7 +91,7 @@ export function getToolResultValue(toolContent: ToolEventData): unknown {
     content.payload,
   ]
   for (const candidate of candidates) {
-    const parsed = parseMaybeJson(candidate)
+    const parsed = unwrapResultCandidate(candidate)
     if (parsed != null) return parsed
   }
   return content
@@ -114,4 +151,3 @@ export function truncateText(value: string, limit = 360): string {
   if (normalized.length <= limit) return normalized
   return `${normalized.slice(0, Math.max(0, limit - 1)).trimEnd()}…`
 }
-

@@ -200,6 +200,8 @@ export type LabQuestGraphNode = {
   branch_name: string
   parent_branch?: string | null
   branch_class?: 'main' | 'idea' | 'analysis' | 'paper' | null
+  node_kind?: 'branch' | 'baseline_root' | 'placeholder' | null
+  placeholder?: boolean | null
   worktree_rel_path?: string | null
   latest_commit?: string | null
   status?: string | null
@@ -227,6 +229,9 @@ export type LabQuestGraphNode = {
   claim_evidence_state?: string | null
   commit_trust?: string | null
   target_label?: string | null
+  scope_paths?: string[] | null
+  compare_base?: string | null
+  compare_head?: string | null
   node_summary?: {
     last_event_type?: string | null
     last_reply?: string | null
@@ -401,6 +406,11 @@ export type LabQuestSelectionContext = {
   agent_instance_id?: string | null
   worktree_rel_path?: string | null
   trace_node_id?: string | null
+  compare_base?: string | null
+  compare_head?: string | null
+  scope_paths?: string[] | null
+  node_kind?: string | null
+  baseline_gate?: string | null
 }
 
 export type LabQuestNodeTraceAction = QuestNodeTraceAction
@@ -1487,6 +1497,264 @@ function resolveBranchClass(node: GitBranchNode): 'main' | 'idea' | 'analysis' |
   return 'main'
 }
 
+type LocalBaselineGate = 'pending' | 'confirmed' | 'waived'
+
+function resolveBaselineGate(summary: QuestSummary): LocalBaselineGate {
+  const normalized = String(summary.baseline_gate || '').trim().toLowerCase()
+  if (normalized === 'confirmed') return 'confirmed'
+  if (normalized === 'waived') return 'waived'
+  return 'pending'
+}
+
+function resolveConfirmedBaselineRelPath(summary: QuestSummary): string | null {
+  const ref = summary.confirmed_baseline_ref
+  if (!ref || typeof ref !== 'object') return null
+  const candidate = String(ref.baseline_root_rel_path || '').trim()
+  if (candidate) return candidate
+  const baselineId = String(ref.baseline_id || '').trim()
+  if (!baselineId) return null
+  const sourceMode = String(ref.source_mode || '').trim().toLowerCase()
+  if (sourceMode === 'imported') {
+    return `baselines/imported/${baselineId}`
+  }
+  return `baselines/local/${baselineId}`
+}
+
+function resolveBaselineNodeId(summary: QuestSummary): string {
+  const baselineGate = resolveBaselineGate(summary)
+  const ref = summary.confirmed_baseline_ref
+  const baselineId = String(ref?.baseline_id || summary.active_baseline_id || '').trim()
+  if (baselineGate === 'confirmed' && baselineId) {
+    return `baseline:${baselineId}`
+  }
+  if (baselineGate === 'waived') {
+    return `baseline:${summary.quest_id}:waived`
+  }
+  return `baseline:${summary.quest_id}:pending`
+}
+
+function resolveBaselineRootLabel(summary: QuestSummary): string {
+  const baselineGate = resolveBaselineGate(summary)
+  const ref = summary.confirmed_baseline_ref
+  const baselineId = String(ref?.baseline_id || summary.active_baseline_id || '').trim()
+  if (baselineGate === 'confirmed') {
+    return baselineId ? `Baseline · ${baselineId}` : 'Baseline · confirmed'
+  }
+  if (baselineGate === 'waived') {
+    return 'Baseline (waived)'
+  }
+  return 'Baseline (pending)'
+}
+
+function resolveBaselineRootSummary(summary: QuestSummary): string {
+  const baselineGate = resolveBaselineGate(summary)
+  const ref = summary.confirmed_baseline_ref
+  if (baselineGate === 'confirmed') {
+    const variantId = String(ref?.variant_id || summary.active_baseline_variant_id || '').trim()
+    const relPath = resolveConfirmedBaselineRelPath(summary)
+    if (variantId && relPath) {
+      return `Confirmed variant ${variantId} at ${relPath}.`
+    }
+    if (relPath) {
+      return `Confirmed baseline root at ${relPath}.`
+    }
+    return 'Baseline gate confirmed.'
+  }
+  if (baselineGate === 'waived') {
+    return 'Baseline gate was explicitly waived. Downstream stages may proceed with caveats.'
+  }
+  return 'Attach/import/reproduce first, then call artifact.confirm_baseline(...) or artifact.waive_baseline(...).'
+}
+
+function resolveBaselineScopePaths(summary: QuestSummary): string[] {
+  const relPath = resolveConfirmedBaselineRelPath(summary)
+  if (relPath) return [relPath]
+  return ['baselines/local', 'baselines/imported']
+}
+
+function resolveFormalBaselineState(summary: QuestSummary) {
+  const baselineGate = resolveBaselineGate(summary)
+  if (baselineGate === 'confirmed') return 'confirmed'
+  if (baselineGate === 'waived') return 'waived'
+  return 'pending'
+}
+
+function resolveBranchCompareBase(node: GitBranchNode): string | null {
+  const parent = String(node.parent_ref || '').trim()
+  if (parent) return parent
+  const ref = String(node.ref || '').trim()
+  if (ref && ref !== 'main') return 'main'
+  return null
+}
+
+function resolveGraphBranchStageKey(
+  summary: QuestSummary,
+  node: GitBranchNode | null,
+  branchTrace?: LabQuestNodeTrace | null
+) {
+  const traced = resolveStageKey(branchTrace?.stage_key)
+  if (isCanonicalStage(traced)) return traced
+  const runKind = resolveStageKey(node?.run_kind || null)
+  if (isCanonicalStage(runKind)) return runKind
+  const inferredClass = node ? resolveBranchClass(node) : 'main'
+  if (inferredClass === 'idea') return 'idea'
+  if (inferredClass === 'analysis') return 'analysis-campaign'
+  if (inferredClass === 'paper') return 'write'
+  return 'baseline'
+}
+
+function resolveHighestObservedStage(
+  summary: QuestSummary,
+  nodes: LabQuestGraphNode[]
+): (typeof CANONICAL_STAGE_ORDER)[number] {
+  let best = resolveBaselineGate(summary) === 'pending' ? 'baseline' : resolveStageKey(summary.active_anchor)
+  nodes.forEach((node) => {
+    const stage = resolveStageKey(node.stage_key)
+    if (resolveStageRank(stage) > resolveStageRank(best)) {
+      best = stage
+    }
+  })
+  return (CANONICAL_STAGE_ORDER.includes(best as (typeof CANONICAL_STAGE_ORDER)[number]) ? best : 'baseline') as
+    (typeof CANONICAL_STAGE_ORDER)[number]
+}
+
+function buildLocalBranchGraphNodes(
+  summary: QuestSummary,
+  branches: GitBranchesPayload | null,
+  branchTraceByName: Map<string, LabQuestNodeTrace>
+): LabQuestGraphNode[] {
+  const baselineGate = resolveBaselineGate(summary)
+  const baselineRootId = resolveBaselineNodeId(summary)
+  const realNodes =
+    branches?.nodes?.length
+      ? branches.nodes.map((node) =>
+          mapGitNodeToLabQuestGraphNode(summary.quest_id, summary, node, branchTraceByName.get(node.ref) || null)
+        )
+      : [buildFallbackGraphNode(summary, branchTraceByName.get(summary.branch || 'main') || null)]
+
+  const baselineNode: LabQuestGraphNode = {
+    node_id: baselineRootId,
+    branch_name: 'baseline',
+    parent_branch: null,
+    branch_class: 'main',
+    node_kind: 'baseline_root',
+    placeholder: baselineGate === 'pending',
+    worktree_rel_path: resolveConfirmedBaselineRelPath(summary),
+    latest_commit: null,
+    status: baselineGate,
+    stage_key: 'baseline',
+    stage_title: 'Baseline',
+    event_count: 0,
+    baseline_state: baselineGate,
+    runtime_state: baselineGate === 'pending' ? 'waiting' : 'idle',
+    target_label: resolveBaselineRootLabel(summary),
+    scope_paths: resolveBaselineScopePaths(summary),
+    node_summary: {
+      last_event_type: 'baseline_gate',
+      last_reply: resolveBaselineRootSummary(summary),
+    },
+  }
+
+  const nodes: LabQuestGraphNode[] = [baselineNode, ...realNodes]
+  if (baselineGate === 'pending') {
+    return [baselineNode]
+  }
+
+  const highestStage = resolveHighestObservedStage(summary, realNodes)
+  const nextRank = resolveStageRank(highestStage) + 1
+  const nextStage =
+    nextRank >= 0 && nextRank < CANONICAL_STAGE_ORDER.length
+      ? CANONICAL_STAGE_ORDER[nextRank]
+      : null
+  if (!nextStage || nextStage === 'baseline') {
+    return nodes
+  }
+  const alreadyCovered = realNodes.some((node) => resolveStageRank(node.stage_key) >= resolveStageRank(nextStage))
+  if (alreadyCovered) {
+    return nodes
+  }
+
+  const anchorNode =
+    realNodes.find((node) => node.branch_name === (summary.branch || 'main')) ||
+    realNodes
+      .slice()
+      .sort((left, right) => resolveStageRank(right.stage_key) - resolveStageRank(left.stage_key))[0] ||
+    baselineNode
+  const placeholderId = `${summary.quest_id}:next:${nextStage}`
+  nodes.push({
+    node_id: placeholderId,
+    branch_name: `${nextStage}:next`,
+    parent_branch: anchorNode.node_id,
+    branch_class:
+      nextStage === 'idea' ? 'idea' : nextStage === 'analysis-campaign' ? 'analysis' : nextStage === 'write' ? 'paper' : 'main',
+    node_kind: 'placeholder',
+    placeholder: true,
+    worktree_rel_path: null,
+    latest_commit: null,
+    status: 'pending',
+    stage_key: nextStage,
+    stage_title: formatStageTitle(nextStage),
+    baseline_state: baselineGate,
+    runtime_state: 'idle',
+    target_label: formatStageTitle(nextStage),
+    scope_paths: null,
+    compare_base: null,
+    compare_head: null,
+    node_summary: {
+      last_event_type: 'next_stage',
+      last_reply: `Next durable stage after ${formatStageTitle(highestStage)}.`,
+    },
+  })
+  return nodes
+}
+
+function buildLocalBranchGraphEdges(
+  summary: QuestSummary,
+  nodes: LabQuestGraphNode[],
+  branches: GitBranchesPayload | null
+): LabQuestGraphEdge[] {
+  const baselineRootId = resolveBaselineNodeId(summary)
+  const edges: LabQuestGraphEdge[] = []
+  const branchEdges = branches?.edges ?? []
+  branchEdges.forEach((edge, index) => {
+    edges.push({
+      edge_id: `edge:${index}:${edge.from}:${edge.to}`,
+      source: edge.from,
+      target: edge.to,
+      edge_type: edge.relation || 'branch',
+    })
+  })
+
+  const firstOperationalNode =
+    nodes.find((node) => node.node_kind !== 'baseline_root' && node.node_kind !== 'placeholder' && node.branch_name === (summary.branch || 'main')) ||
+    nodes.find((node) => node.node_kind !== 'baseline_root' && node.node_kind !== 'placeholder')
+  if (firstOperationalNode) {
+    edges.unshift({
+      edge_id: `${baselineRootId}->${firstOperationalNode.node_id}`,
+      source: baselineRootId,
+      target: firstOperationalNode.node_id,
+      edge_type: 'baseline',
+    })
+  }
+
+  const placeholderNode = nodes.find((node) => node.node_kind === 'placeholder')
+  if (placeholderNode) {
+    const anchorNode =
+      nodes.find((node) => node.node_id === placeholderNode.parent_branch) ||
+      firstOperationalNode ||
+      nodes.find((node) => node.node_id === baselineRootId)
+    if (anchorNode) {
+      edges.push({
+        edge_id: `${anchorNode.node_id}->${placeholderNode.node_id}`,
+        source: anchorNode.node_id,
+        target: placeholderNode.node_id,
+        edge_type: 'placeholder',
+      })
+    }
+  }
+  return edges
+}
+
 function latestMetrics(summary: QuestSummary) {
   const metric = summary.summary?.latest_metric
   if (!metric?.key) return null
@@ -1530,7 +1798,7 @@ function buildLocalBranchWorkbench(summary: QuestSummary, branches?: GitBranches
         branchName: summary.branch || 'main',
         branchClass: 'main',
         isHead: true,
-        stage: resolveStageKey(summary.active_anchor),
+        stage: 'baseline',
         nowDoing: summary.summary?.status_line ?? null,
         latestMetrics: latestMetrics(summary),
       },
@@ -1543,7 +1811,7 @@ function buildLocalBranchWorkbench(summary: QuestSummary, branches?: GitBranches
     parentBranch: node.parent_ref ?? null,
     worktreeRelPath: node.worktree_root ?? null,
     isHead: Boolean(node.current),
-    stage: node.run_kind ? resolveStageKey(node.run_kind) : resolveStageKey(summary.active_anchor),
+    stage: resolveGraphBranchStageKey(summary, node, null),
     nowDoing: node.latest_summary ?? node.subject ?? null,
     latestMetrics: node.latest_metric?.key
       ? { [node.latest_metric.key]: node.latest_metric.value ?? null }
@@ -1580,7 +1848,7 @@ function buildLocalGovernanceVm(summary: QuestSummary, branches?: GitBranchesPay
       cliLastSeenAt: normalizeTimestamp(summary.updated_at),
     },
     governance: {
-      formalBaselineState: 'tracked',
+      formalBaselineState: resolveFormalBaselineState(summary),
       autoPushState: 'disabled',
       lastPushStatus: 'local_only',
       writerConflict: false,
@@ -1668,6 +1936,16 @@ function buildLocalTemplatePools(): LabPromptPool[] {
 
 function mapQuestSummaryToLabQuest(summary: QuestSummary, branches?: GitBranchesPayload | null): LabQuest {
   const governanceVm = buildLocalGovernanceVm(summary, branches)
+  const baselineGate = resolveBaselineGate(summary)
+  const confirmedBaselineId = String(
+    summary.confirmed_baseline_ref?.baseline_id || summary.active_baseline_id || ''
+  ).trim()
+  const baselineRootId =
+    baselineGate === 'confirmed'
+      ? confirmedBaselineId || null
+      : baselineGate === 'waived'
+        ? confirmedBaselineId || 'waived'
+        : null
   return {
     quest_id: summary.quest_id,
     title: summary.title || summary.quest_id,
@@ -1675,7 +1953,7 @@ function mapQuestSummaryToLabQuest(summary: QuestSummary, branches?: GitBranches
     status: summary.status || 'idle',
     description: summary.summary?.status_line || null,
     tags: summary.branch ? [summary.branch] : null,
-    baseline_root_id: summary.branch ? `${summary.quest_id}:baseline` : null,
+    baseline_root_id: baselineRootId,
     pi_agent_instance_id: `${summary.quest_id}:pi`,
     pi_state: summary.status || 'idle',
     cli_server_id: `local:${summary.quest_id}`,
@@ -1739,19 +2017,21 @@ function mapGitNodeToLabQuestGraphNode(
   branchTrace?: LabQuestNodeTrace | null
 ): LabQuestGraphNode {
   const traceMetrics = extractTraceMetrics(branchTrace)
+  const traceWorktreeRelPath = String(branchTrace?.worktree_rel_path || '').trim() || null
   const metrics =
     node.latest_metric?.key
       ? { [node.latest_metric.key]: node.latest_metric.value ?? null }
       : traceMetrics || latestMetrics(summary)
-  const stageKey =
-    branchTrace?.stage_key || (node.run_kind ? resolveStageKey(node.run_kind) : resolveStageKey(summary.active_anchor))
+  const stageKey = resolveGraphBranchStageKey(summary, node, branchTrace)
 
   return {
     node_id: node.ref,
     branch_name: node.ref,
     parent_branch: node.parent_ref ?? null,
     branch_class: resolveBranchClass(node),
-    worktree_rel_path: node.worktree_root ?? null,
+    node_kind: 'branch',
+    placeholder: false,
+    worktree_rel_path: traceWorktreeRelPath,
     latest_commit: branchTrace?.head_commit || node.head || null,
     status: node.current ? 'active' : 'ready',
     idea_id: (asStringValue(asRecordValue(branchTrace?.payload_json)?.idea_id) || node.idea_id) ?? null,
@@ -1766,9 +2046,12 @@ function mapGitNodeToLabQuestGraphNode(
       ?.map((action) => String(action.action_id || '').trim())
       .filter((value): value is string => Boolean(value)),
     event_count: branchTrace?.counts?.actions ?? node.commit_count ?? 0,
-    baseline_state: 'tracked',
+    baseline_state: resolveBaselineGate(summary),
     runtime_state: node.current ? normalizeLabWorkingStatus(summary.status) : 'idle',
     target_label: node.label,
+    scope_paths: traceWorktreeRelPath ? [traceWorktreeRelPath] : null,
+    compare_base: resolveBranchCompareBase(node),
+    compare_head: node.ref,
     node_summary: {
       last_event_type:
         branchTrace?.artifact_kind ||
@@ -1784,12 +2067,14 @@ function mapGitNodeToLabQuestGraphNode(
 }
 
 function buildFallbackGraphNode(summary: QuestSummary, branchTrace?: LabQuestNodeTrace | null): LabQuestGraphNode {
-  const stageKey = branchTrace?.stage_key || resolveStageKey(summary.active_anchor)
+  const stageKey = resolveGraphBranchStageKey(summary, null, branchTrace)
   return {
     node_id: summary.branch || 'main',
     branch_name: summary.branch || 'main',
     parent_branch: null,
     branch_class: 'main',
+    node_kind: 'branch',
+    placeholder: false,
     worktree_rel_path: null,
     latest_commit: branchTrace?.head_commit || summary.head || null,
     status: 'active',
@@ -1802,9 +2087,12 @@ function buildFallbackGraphNode(summary: QuestSummary, branchTrace?: LabQuestNod
       ?.map((action) => String(action.action_id || '').trim())
       .filter((value): value is string => Boolean(value)),
     event_count: branchTrace?.counts?.actions ?? Number(summary.counts?.artifacts || 0),
-    baseline_state: 'tracked',
+    baseline_state: resolveBaselineGate(summary),
     runtime_state: normalizeLabWorkingStatus(summary.status),
     target_label: summary.title || summary.quest_id,
+    scope_paths: null,
+    compare_base: null,
+    compare_head: summary.branch || 'main',
     node_summary: {
       last_event_type:
         branchTrace?.artifact_kind ||
@@ -2379,21 +2667,12 @@ function buildLocalQuestGraphResponse(
       overlay_actions: [],
     }
   }
+  const branchNodes = buildLocalBranchGraphNodes(summary, branches, branchTraceByName)
+  const branchEdges = buildLocalBranchGraphEdges(summary, branchNodes, branches)
   return {
     view,
-    nodes:
-      branches?.nodes?.length
-        ? branches.nodes.map((node) =>
-            mapGitNodeToLabQuestGraphNode(summary.quest_id, summary, node, branchTraceByName.get(node.ref) || null)
-          )
-        : [buildFallbackGraphNode(summary, branchTraceByName.get(summary.branch || 'main') || null)],
-    edges:
-      branches?.edges?.map((edge, index) => ({
-        edge_id: `edge:${index}:${edge.from}:${edge.to}`,
-        source: edge.from,
-        target: edge.to,
-        edge_type: edge.relation || 'branch',
-      })) ?? [],
+    nodes: branchNodes,
+    edges: branchEdges,
     head_branch: summary.branch || 'main',
     layout_json: null,
     metric_catalog: summary.summary?.latest_metric?.key
@@ -3023,19 +3302,12 @@ export async function getLabQuestGraph(
     }
     const summary = await loadLocalQuestSummary(projectId)
     const branches = await loadLocalQuestBranches(projectId)
+    const branchNodes = buildLocalBranchGraphNodes(summary, branches, new Map())
+    const branchEdges = buildLocalBranchGraphEdges(summary, branchNodes, branches)
     return {
       view: params?.view ?? 'branch',
-      nodes:
-        branches?.nodes?.length
-          ? branches.nodes.map((node) => mapGitNodeToLabQuestGraphNode(questId, summary, node))
-          : [buildFallbackGraphNode(summary)],
-      edges:
-        branches?.edges?.map((edge, index) => ({
-          edge_id: `edge:${index}:${edge.from}:${edge.to}`,
-          source: edge.from,
-          target: edge.to,
-          edge_type: edge.relation || 'branch',
-        })) ?? [],
+      nodes: branchNodes,
+      edges: branchEdges,
       head_branch: summary.branch || 'main',
       layout_json: null,
       metric_catalog: summary.summary?.latest_metric?.key
@@ -4074,17 +4346,18 @@ export async function getLabQuestArtifact(
 
 export async function listLabBaselines(projectId: string): Promise<LabListResponse<LabBaseline>> {
   if (await shouldUseLocalQuestLab(projectId)) {
-    const summary = await loadLocalQuestSummary(projectId)
-    return {
-      items: [
-        {
-          baseline_root_id: `${summary.quest_id}:baseline`,
-          title: `${summary.title || summary.quest_id} baseline`,
-          status: 'tracked',
-          last_reproduced_at: normalizeTimestamp(summary.updated_at),
-          archive_file_id: null,
-        },
-      ],
+    try {
+      const entries = await questClient.baselines()
+      const items = (Array.isArray(entries) ? entries : []).map((entry) => ({
+        baseline_root_id: entry.baseline_id,
+        title: entry.summary ? `${entry.baseline_id} · ${entry.summary}` : entry.baseline_id,
+        status: entry.status ?? null,
+        last_reproduced_at: normalizeTimestamp(entry.updated_at || entry.created_at),
+        archive_file_id: null,
+      }))
+      return { items }
+    } catch {
+      return { items: [] }
     }
   }
   try {
@@ -4094,17 +4367,18 @@ export async function listLabBaselines(projectId: string): Promise<LabListRespon
     if (!isLocalLabFallbackError(error)) {
       throw error
     }
-    const summary = await loadLocalQuestSummary(projectId)
-    return {
-      items: [
-        {
-          baseline_root_id: `${summary.quest_id}:baseline`,
-          title: `${summary.title || summary.quest_id} baseline`,
-          status: 'tracked',
-          last_reproduced_at: normalizeTimestamp(summary.updated_at),
-          archive_file_id: null,
-        },
-      ],
+    try {
+      const entries = await questClient.baselines()
+      const items = (Array.isArray(entries) ? entries : []).map((entry) => ({
+        baseline_root_id: entry.baseline_id,
+        title: entry.summary ? `${entry.baseline_id} · ${entry.summary}` : entry.baseline_id,
+        status: entry.status ?? null,
+        last_reproduced_at: normalizeTimestamp(entry.updated_at || entry.created_at),
+        archive_file_id: null,
+      }))
+      return { items }
+    } catch {
+      return { items: [] }
     }
   }
 }

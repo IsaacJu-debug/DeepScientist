@@ -2212,6 +2212,18 @@
   font-size: 13px;
 }
 
+.lab-quest-graph-node.is-placeholder {
+  border-style: dashed;
+  border-color: rgba(155, 131, 82, 0.46);
+  background: linear-gradient(180deg, rgba(255, 252, 247, 0.96), rgba(246, 240, 232, 0.88));
+  box-shadow: 0 12px 28px rgba(155, 131, 82, 0.12);
+}
+
+.lab-quest-graph-node.is-waived {
+  border-color: rgba(148, 163, 184, 0.3);
+  background: linear-gradient(180deg, rgba(246, 248, 250, 0.92), rgba(237, 242, 247, 0.88));
+}
+
 .lab-quest-graph-node.is-selected {
   outline: 2px solid rgba(83, 176, 174, 0.45);
   box-shadow: 0 0 0 4px rgba(83, 176, 174, 0.12), 0 20px 38px rgba(15, 23, 42, 0.12);
@@ -2223,6 +2235,15 @@
 
 :is(.dark, [data-theme="dark"]) .lab-quest-graph-node.is-event {
   background: linear-gradient(140deg, rgba(34, 36, 42, 0.92), rgba(24, 26, 32, 0.9));
+}
+
+:is(.dark, [data-theme="dark"]) .lab-quest-graph-node.is-placeholder {
+  border-color: rgba(196, 160, 102, 0.45);
+  background: linear-gradient(160deg, rgba(45, 40, 32, 0.92), rgba(28, 24, 20, 0.88));
+}
+
+:is(.dark, [data-theme="dark"]) .lab-quest-graph-node.is-waived {
+  background: linear-gradient(160deg, rgba(30, 33, 38, 0.92), rgba(22, 24, 29, 0.9));
 }
 
 .lab-quest-graph-node.is-decision {

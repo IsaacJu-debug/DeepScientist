@@ -42,6 +42,7 @@ import { useLabCopilotStore } from '@/lib/stores/lab-copilot'
 import { useLabGraphSelectionStore } from '@/lib/stores/lab-graph-selection'
 import { cn } from '@/lib/utils'
 import { getProgressPercent } from '@/lib/utils/bash-progress'
+import { QuestSettingsSurface } from '@/components/workspace/QuestSettingsSurface'
 import type { BashLogEntry, BashProgress, BashSession } from '@/lib/types/bash'
 import {
   isBashProgressMarker,
@@ -2103,7 +2104,7 @@ export function QuestWorkspaceSurfaceInner({
     !workflow &&
     documents.length === 0 &&
     memory.length === 0 &&
-    view === 'details'
+    (view === 'details' || view === 'settings')
   ) {
     return (
       <div className="panel center-panel morandi-glow ds-stage" style={{ flex: 1 }}>
@@ -2138,6 +2139,12 @@ export function QuestWorkspaceSurfaceInner({
           />
         ) : view === 'terminal' ? (
           <QuestTerminalSurface questId={questId} onRefresh={refreshWorkspace} />
+        ) : view === 'settings' ? (
+          <QuestSettingsSurface
+            questId={questId}
+            snapshot={snapshot}
+            onRefresh={refreshWorkspace}
+          />
         ) : (
           <QuestDetails
             questId={questId}

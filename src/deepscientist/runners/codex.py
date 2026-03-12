@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ..artifact import ArtifactService
+from ..config import ConfigManager
 from ..gitops import export_git_graph
 from ..prompts import PromptBuilder
 from ..runtime_logs import JsonlLogger
@@ -848,6 +849,18 @@ class CodexRunner:
             prefix = existing.rstrip()
 
         pythonpath = os.environ.get("PYTHONPATH", "")
+        tool_timeout_sec = None
+        try:
+            runners_cfg = ConfigManager(self.home).load_named("runners")
+            raw_codex_cfg = runners_cfg.get("codex") if isinstance(runners_cfg.get("codex"), dict) else {}
+            raw_timeout = raw_codex_cfg.get("mcp_tool_timeout_sec") if isinstance(raw_codex_cfg, dict) else None
+            if raw_timeout is not None:
+                tool_timeout_sec = float(raw_timeout)
+        except (OSError, ValueError, TypeError, KeyError):
+            tool_timeout_sec = None
+        if tool_timeout_sec is not None and tool_timeout_sec <= 0:
+            tool_timeout_sec = None
+
         shared_env = {
             "DS_HOME": str(self.home),
             "DS_QUEST_ID": quest_id,
@@ -866,11 +879,11 @@ class CodexRunner:
         block = "\n".join(
             [
                 marker_start,
-                self._mcp_block("memory", shared_env),
+                self._mcp_block("memory", shared_env, tool_timeout_sec=tool_timeout_sec),
                 "",
-                self._mcp_block("artifact", shared_env),
+                self._mcp_block("artifact", shared_env, tool_timeout_sec=tool_timeout_sec),
                 "",
-                self._mcp_block("bash_exec", shared_env),
+                self._mcp_block("bash_exec", shared_env, tool_timeout_sec=tool_timeout_sec),
                 marker_end,
             ]
         ).strip()
@@ -878,15 +891,22 @@ class CodexRunner:
         write_text(config_path, new_text)
 
     @staticmethod
-    def _mcp_block(name: str, env: dict[str, str]) -> str:
+    def _mcp_block(name: str, env: dict[str, str], *, tool_timeout_sec: float | None = None) -> str:
         args = ["-m", "deepscientist.mcp.server", "--namespace", name]
         lines = [
             f"[mcp_servers.{name}]",
             f'command = "{sys.executable}"',
             f"args = [{', '.join(json.dumps(item) for item in args)}]",
-            "",
-            f"[mcp_servers.{name}.env]",
         ]
+        if tool_timeout_sec is not None:
+            value = int(tool_timeout_sec) if float(tool_timeout_sec).is_integer() else float(tool_timeout_sec)
+            lines.append(f"tool_timeout_sec = {value}")
+        lines.extend(
+            [
+                "",
+                f"[mcp_servers.{name}.env]",
+            ]
+        )
         for key, value in env.items():
             lines.append(f"{key} = {json.dumps(value)}")
         return "\n".join(lines)

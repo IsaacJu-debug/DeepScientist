@@ -43,6 +43,15 @@ export interface FileTreeProps {
 
   /** When true, hide files/folders starting with a dot (.) */
   hideDotfiles?: boolean;
+
+  /** Optional externally-scoped tree nodes. */
+  nodesOverride?: FileNode[] | null;
+
+  /** Optional external loading state for overridden nodes. */
+  loadingOverride?: boolean;
+
+  /** Optional empty label for overridden trees. */
+  emptyLabel?: string;
 }
 
 function filterDotfiles(nodes: FileNode[]): FileNode[] {
@@ -90,6 +99,9 @@ export function FileTree({
   height = "100%",
   readOnly = false,
   hideDotfiles = false,
+  nodesOverride,
+  loadingOverride,
+  emptyLabel,
 }: FileTreeProps) {
   const treeRef = React.useRef<TreeApi<FileNode>>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -401,12 +413,13 @@ export function FileTree({
   }, []);
 
   const visibleNodes = React.useMemo(
-    () => (hideDotfiles ? filterDotfiles(nodes) : nodes),
-    [hideDotfiles, nodes]
+    () => (hideDotfiles ? filterDotfiles(nodesOverride ?? nodes) : nodesOverride ?? nodes),
+    [hideDotfiles, nodes, nodesOverride]
   );
 
-  const showLoadingState = isLoading && nodes.length === 0;
-  const showEmptyState = !isLoading && !error && visibleNodes.length === 0;
+  const effectiveLoading = loadingOverride ?? isLoading;
+  const showLoadingState = effectiveLoading && visibleNodes.length === 0;
+  const showEmptyState = !effectiveLoading && !error && visibleNodes.length === 0;
 
   return (
     <div
@@ -449,7 +462,7 @@ export function FileTree({
           <div className="mb-4">
             <Icon3D name="folder-open" size="lg" className="opacity-95" />
           </div>
-          <p className="text-sm font-medium mb-1">No files yet</p>
+          <p className="text-sm font-medium mb-1">{emptyLabel || "No files yet"}</p>
           <p className="text-xs text-white/55 mb-4">
             Drop files here, or upload a starter file to begin.
           </p>

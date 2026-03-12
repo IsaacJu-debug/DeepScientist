@@ -2,7 +2,7 @@
 
 This document is the single repo-level reference for the current DeepScientist TUI workflow.
 
-For the current runtime control flow, prompt/skill execution model, MCP surface, and Canvas reconstruction logic, also see `docs/RUNTIME_FLOW_AND_CANVAS.md`.
+For the current runtime control flow, prompt/skill execution model, MCP surface, and Canvas reconstruction logic, also see `docs/en/RUNTIME_FLOW_AND_CANVAS.md`.
 
 ## Install And Start
 
@@ -38,6 +38,7 @@ Inside the TUI:
 - `/projects`: open the quest browser.
 - `/use <quest_id>`: bind the current TUI session to one quest.
 - `/new`: create a quest from inside the TUI.
+- `/delete <quest_id> --yes`: delete a quest (destructive; requires confirmation).
 - plain text: send a normal user message to the bound quest.
 - `/status`: inspect the current quest state.
 - `/graph`: inspect the current quest graph.

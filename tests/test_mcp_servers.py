@@ -110,6 +110,8 @@ def test_artifact_mcp_server_tools_cover_core_flows(temp_home: Path) -> None:
             "record_analysis_slice",
             "publish_baseline",
             "attach_baseline",
+            "confirm_baseline",
+            "waive_baseline",
             "arxiv",
             "refresh_summary",
             "render_git_graph",
@@ -159,23 +161,6 @@ def test_artifact_mcp_server_tools_cover_core_flows(temp_home: Path) -> None:
         assert branch_result["ok"] is True
         assert branch_result["branch"].startswith("run/")
 
-        idea_result = _unwrap_tool_result(
-            await server.call_tool(
-                "submit_idea",
-                {
-                    "mode": "create",
-                    "title": "Adapter route",
-                    "problem": "Baseline saturates.",
-                    "hypothesis": "A lightweight adapter helps.",
-                    "mechanism": "Insert a residual adapter.",
-                    "decision_reason": "Promote the strongest current idea.",
-                },
-            )
-        )
-        assert idea_result["ok"] is True
-        assert idea_result["branch"].startswith(f"idea/{quest['quest_id']}-")
-        assert Path(idea_result["worktree_root"]).exists()
-
         publish_result = _unwrap_tool_result(
             await server.call_tool(
                 "publish_baseline",
@@ -194,6 +179,9 @@ def test_artifact_mcp_server_tools_cover_core_flows(temp_home: Path) -> None:
         )
         assert publish_result["ok"] is True
         assert publish_result["baseline_registry_entry"]["baseline_id"] == "mcp-baseline"
+        baseline_root = quest_root / "baselines" / "local" / "mcp-baseline"
+        baseline_root.mkdir(parents=True, exist_ok=True)
+        (baseline_root / "README.md").write_text("# MCP Baseline\n", encoding="utf-8")
 
         attach_result = _unwrap_tool_result(
             await server.call_tool(
@@ -206,6 +194,38 @@ def test_artifact_mcp_server_tools_cover_core_flows(temp_home: Path) -> None:
         )
         assert attach_result["ok"] is True
         assert attach_result["attachment"]["source_variant_id"] == "main"
+
+        confirm_result = _unwrap_tool_result(
+            await server.call_tool(
+                "confirm_baseline",
+                {
+                    "baseline_path": "baselines/imported/mcp-baseline",
+                    "baseline_id": "mcp-baseline",
+                    "variant_id": "main",
+                    "summary": "MCP baseline confirmed",
+                },
+            )
+        )
+        assert confirm_result["ok"] is True
+        assert confirm_result["baseline_gate"] == "confirmed"
+        assert confirm_result["confirmed_baseline_ref"]["baseline_id"] == "mcp-baseline"
+
+        idea_result = _unwrap_tool_result(
+            await server.call_tool(
+                "submit_idea",
+                {
+                    "mode": "create",
+                    "title": "Adapter route",
+                    "problem": "Baseline saturates.",
+                    "hypothesis": "A lightweight adapter helps.",
+                    "mechanism": "Insert a residual adapter.",
+                    "decision_reason": "Promote the strongest current idea.",
+                },
+            )
+        )
+        assert idea_result["ok"] is True
+        assert idea_result["branch"].startswith(f"idea/{quest['quest_id']}-")
+        assert Path(idea_result["worktree_root"]).exists()
 
         main_result = _unwrap_tool_result(
             await server.call_tool(

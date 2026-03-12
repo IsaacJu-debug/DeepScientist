@@ -114,6 +114,22 @@ def test_paper_reading_stage_skills_use_artifact_arxiv_and_legacy_skill_is_remov
     assert not (root / "alpharxiv-paper-loopup" / "SKILL.md").exists()
 
 
+def test_baseline_skill_documents_confirm_or_waive_gate() -> None:
+    text = (repo_root() / "src" / "skills" / "baseline" / "SKILL.md").read_text(encoding="utf-8")
+    assert "artifact.confirm_baseline(...)" in text
+    assert "artifact.waive_baseline(...)" in text
+    assert "do not open the downstream gate" in text
+    assert "requested_baseline_ref" in text
+    assert "default to reuse-and-verify" in text
+
+
+def test_decision_skill_requires_reuse_baseline_to_land_on_attach_and_confirm() -> None:
+    text = (repo_root() / "src" / "skills" / "decision" / "SKILL.md").read_text(encoding="utf-8")
+    assert "artifact.attach_baseline(...)" in text
+    assert "artifact.confirm_baseline(...)" in text
+    assert "explicit blocker or waiver" in text
+
+
 def test_prompt_builder_skill_paths_only_reference_existing_files(temp_home: Path) -> None:
     ensure_home_layout(temp_home)
     ConfigManager(temp_home).ensure_files()
@@ -138,3 +154,26 @@ def test_all_stage_skills_document_blocking_decision_request_options_and_timeout
         text = (root / skill_id / "SKILL.md").read_text(encoding="utf-8")
         assert "1 to 3 concrete options" in text
         assert "wait up to 1 day" in text
+
+
+def test_all_stage_skills_require_stage_start_memory_retrieval_and_stage_end_memory_write() -> None:
+    root = repo_root() / "src" / "skills"
+    for skill_id in ("scout", "baseline", "idea", "experiment", "analysis-campaign", "write", "finalize"):
+        text = (root / skill_id / "SKILL.md").read_text(encoding="utf-8")
+        assert "Stage-start requirement:" in text
+        assert "memory.list_recent(scope='quest', limit=5)" in text
+        assert "memory.search(...)" in text
+        assert "Stage-end requirement:" in text
+        assert "memory.write(...)" in text
+
+
+def test_experiment_skill_requires_outcome_status_in_memory_writes() -> None:
+    text = (repo_root() / "src" / "skills" / "experiment" / "SKILL.md").read_text(encoding="utf-8")
+    assert "`success`, `partial`, or `failure`" in text
+    assert "`idea_id`, `branch`, and `run_id`" in text
+
+
+def test_idea_skill_requires_review_of_prior_ideas_and_experiment_outcomes() -> None:
+    text = (repo_root() / "src" / "skills" / "idea" / "SKILL.md").read_text(encoding="utf-8")
+    assert "review prior quest idea records and experiment outcomes" in text
+    assert "reference material, not as the active idea contract" in text

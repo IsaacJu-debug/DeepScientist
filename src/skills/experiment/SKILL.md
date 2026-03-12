@@ -408,6 +408,12 @@ If these checks fail, record the run as partial or blocked rather than pretendin
 
 ## Memory rules
 
+Stage-start requirement:
+
+- begin every experiment pass with `memory.list_recent(scope='quest', limit=5)`
+- then run at least one experiment-relevant `memory.search(...)` before a new run, retry, or material execution change
+- if several idea or experiment lines exist, narrow retrieval to the current `idea_id`, `branch`, and `run_id`; do not casually reuse memory from another idea line unless you are explicitly comparing lines
+
 Write to memory only when the lesson is reusable, such as:
 
 - experiment failure patterns
@@ -462,10 +468,12 @@ Recommended read timing:
 - after suspicious results:
   - consult recent `episodes` and stable debugging `knowledge`
 
-At stage end:
+Stage-end requirement:
 
 - successful runs should leave at least one reusable knowledge note if the lesson generalizes
 - failed or partial runs should leave an incident note when the failure pattern is reusable
+- every experiment `memory.write(...)` must state whether the outcome was `success`, `partial`, or `failure`
+- every experiment `memory.write(...)` should also include the current `idea_id`, `branch`, and `run_id` so later retrieval does not mix different experiment lines
 
 ## Artifact rules
 

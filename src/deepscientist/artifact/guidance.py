@@ -99,23 +99,48 @@ def build_guidance_for_record(record: dict[str, Any]) -> dict[str, Any]:
     related_paths = list((record.get("paths") or {}).values()) if isinstance(record.get("paths"), dict) else []
 
     if kind == "baseline":
+        flow_type = str(record.get("flow_type") or "").strip().lower()
+        protocol_step = str(record.get("protocol_step") or "").strip().lower()
+        if flow_type == "baseline_gate" and protocol_step == "confirm":
+            return _guidance(
+                current_anchor="baseline",
+                recommended_skill="idea",
+                recommended_action="continue",
+                summary="Baseline gate confirmed. Move into idea selection relative to the accepted baseline.",
+                why_now="The accepted baseline is now explicitly available as the downstream comparison anchor, so ideation is the next real leverage point.",
+                complete_when=[
+                    "At least one candidate idea is recorded durably.",
+                    "A decision artifact selects, rejects, or branches the current direction.",
+                ],
+                alternative_routes=[
+                    _route("publish_baseline", "Publish baseline", "The confirmed baseline should also be reused by future quests.", "Adds packaging work now, but improves future reuse."),
+                    _route("continue", "Stay on baseline verification", "Important comparability questions are still open even after confirmation.", "Keeps caution high, but delays ideation."),
+                ],
+                suggested_artifact_calls=[
+                    _artifact_call("artifact.record(kind='idea', ...)", "Capture the candidate hypothesis set."),
+                    _artifact_call("artifact.record(kind='decision', ...)", "Select the next route with explicit reasons."),
+                ],
+                source_artifact_kind=kind,
+                source_artifact_id=artifact_id,
+                related_paths=[str(path) for path in related_paths],
+            )
         return _guidance(
             current_anchor="baseline",
-            recommended_skill="idea",
+            recommended_skill="baseline",
             recommended_action="continue",
-            summary="Baseline is durable. Move into idea selection relative to the accepted baseline.",
-            why_now="The quest now has a reproducible reference point, so the next gain comes from choosing a concrete direction rather than redoing setup.",
+            summary="Baseline state changed, but the baseline gate may still be closed.",
+            why_now="A baseline record alone does not guarantee downstream comparability. The accepted baseline must still be explicitly confirmed or explicitly waived before ideation and experiments.",
             complete_when=[
-                "At least one candidate idea is recorded durably.",
-                "A decision artifact selects, rejects, or branches the current direction.",
+                "The accepted baseline root, metric contract, and variant are explicit.",
+                "The quest calls `artifact.confirm_baseline(...)` or `artifact.waive_baseline(...)` durably.",
             ],
             alternative_routes=[
-                _route("publish_baseline", "Publish baseline", "The baseline should be reused by future quests.", "Adds reusable value now, but costs a little packaging work."),
+                _route("publish_baseline", "Publish baseline", "The baseline should be reused by future quests.", "Adds reusable value now, but does not by itself open the stage gate."),
                 _route("attach_baseline", "Attach another baseline", "The current reference still looks incomplete or mismatched.", "Improves comparability, but delays ideation."),
             ],
             suggested_artifact_calls=[
-                _artifact_call("artifact.record(kind='idea', ...)", "Capture the candidate hypothesis set."),
-                _artifact_call("artifact.record(kind='decision', ...)", "Select the next route with explicit reasons."),
+                _artifact_call("artifact.confirm_baseline(...)", "Open the canonical baseline stage gate after acceptance."),
+                _artifact_call("artifact.waive_baseline(...)", "Record an explicit baseline waiver when skipping is justified."),
             ],
             source_artifact_kind=kind,
             source_artifact_id=artifact_id,
@@ -301,6 +326,7 @@ def build_guidance_for_record(record: dict[str, Any]) -> dict[str, Any]:
                 why_now=reason or "The quest needs a cleaner baseline foundation or a reusable baseline handoff before deeper work continues.",
                 complete_when=[
                     "The target baseline is attached, published, or confirmed reusable.",
+                    "The canonical gate is opened through `artifact.confirm_baseline(...)` or `artifact.waive_baseline(...)`.",
                     "The next idea or experiment route is recorded with that baseline in mind.",
                 ],
                 alternative_routes=[
@@ -309,6 +335,7 @@ def build_guidance_for_record(record: dict[str, Any]) -> dict[str, Any]:
                 suggested_artifact_calls=[
                     _artifact_call("artifact.attach_baseline(...)", "Attach the accepted global baseline package."),
                     _artifact_call("artifact.publish_baseline(...)", "Publish a quest-local baseline for reuse."),
+                    _artifact_call("artifact.confirm_baseline(...)", "Open the downstream gate after the accepted baseline is clear."),
                 ],
                 source_artifact_kind=kind,
                 source_artifact_id=artifact_id,
@@ -529,16 +556,41 @@ def build_guidance_for_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         return build_guidance_for_record(payload)
 
     anchor = _normalize_anchor(snapshot.get("active_anchor"))
+    baseline_gate = str(snapshot.get("baseline_gate") or "pending").strip().lower() or "pending"
+    if baseline_gate == "pending":
+        return _guidance(
+            current_anchor="baseline",
+            recommended_skill="baseline",
+            recommended_action="continue",
+            summary="Baseline gate is still pending. Prepare or verify the baseline, then confirm or waive it before ideation.",
+            why_now="The quest cannot safely proceed into idea, experiment, or analysis until the accepted baseline is explicitly confirmed or explicitly waived.",
+            complete_when=[
+                "The accepted baseline root, variant, and metric contract are explicit.",
+                "`artifact.confirm_baseline(...)` or `artifact.waive_baseline(...)` is recorded durably.",
+            ],
+            alternative_routes=[
+                _route("attach_baseline", "Attach reusable baseline", "A strong baseline already exists in the registry.", "Fastest route, but still requires explicit confirmation."),
+                _route("publish_baseline", "Publish after reproduction", "You are reconstructing a reusable local baseline.", "Improves future reuse, but still does not replace confirmation."),
+            ],
+            suggested_artifact_calls=[
+                _artifact_call("artifact.attach_baseline(...)", "Attach an existing baseline package."),
+                _artifact_call("artifact.confirm_baseline(...)", "Open the canonical baseline gate."),
+                _artifact_call("artifact.waive_baseline(...)", "Record an explicit waiver when skipping is justified."),
+            ],
+        )
+    if baseline_gate == "waived" and anchor == "baseline":
+        anchor = "idea"
     if anchor == "baseline":
         return _guidance(
             current_anchor="baseline",
             recommended_skill="baseline",
             recommended_action="continue",
-            summary="Quest created. Establish, attach, or verify a baseline before ideation.",
-            why_now="The quest still lacks a durable baseline foundation, so any idea or experiment work would be premature.",
+            summary="Quest is in baseline stage. Keep the baseline contract explicit until the gate is confirmed or waived.",
+            why_now="The baseline stage is only complete when the accepted baseline is explicitly confirmed or explicitly waived for downstream work.",
             complete_when=[
                 "A baseline artifact exists.",
                 "The evaluation contract and baseline identity are explicit enough for idea selection.",
+                "`artifact.confirm_baseline(...)` or `artifact.waive_baseline(...)` is recorded.",
             ],
             alternative_routes=[
                 _route("attach_baseline", "Attach reusable baseline", "A strong baseline already exists in the registry.", "Fastest route, but depends on compatibility."),
@@ -546,7 +598,7 @@ def build_guidance_for_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             ],
             suggested_artifact_calls=[
                 _artifact_call("artifact.attach_baseline(...)", "Attach an existing baseline package."),
-                _artifact_call("artifact.record(kind='baseline', ...)", "Persist the accepted baseline state."),
+                _artifact_call("artifact.confirm_baseline(...)", "Open the canonical baseline stage gate."),
             ],
         )
     if anchor == "scout":

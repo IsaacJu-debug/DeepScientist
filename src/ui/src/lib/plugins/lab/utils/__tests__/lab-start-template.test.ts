@@ -34,6 +34,7 @@ describe('lab-start-template', () => {
     })
 
     expect(prompt).toContain('Research Contract')
+    expect(prompt).toContain('Runtime should attach and confirm this baseline before the quest starts.')
     expect(prompt).toContain('Scope: Baseline + direction')
     expect(prompt).toContain('Resource policy: Balanced')
     expect(prompt).toContain('Git strategy: Semantic head + controlled integration')

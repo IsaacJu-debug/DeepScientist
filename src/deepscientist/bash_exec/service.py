@@ -364,9 +364,8 @@ class BashExecService:
         meta["stopped_by_user_id"] = request_payload["user_id"]
         meta["updated_at"] = utc_now()
         _atomic_write_json(self.meta_path(quest_root, bash_id), meta)
-        monitor_pid = meta.get("monitor_pid")
         process_group_id = meta.get("process_group_id")
-        if not _is_process_alive(monitor_pid) and isinstance(process_group_id, int) and process_group_id > 0:
+        if isinstance(process_group_id, int) and process_group_id > 0:
             try:
                 os.killpg(process_group_id, signal.SIGTERM)
             except ProcessLookupError:

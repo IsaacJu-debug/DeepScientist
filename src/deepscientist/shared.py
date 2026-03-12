@@ -55,11 +55,17 @@ def read_text(path: Path, default: str = "") -> str:
     return path.read_text(encoding="utf-8")
 
 
-def write_json(path: Path, payload: Any) -> None:
+def _atomic_write_text(path: Path, content: str) -> None:
     ensure_dir(path.parent)
-    path.write_text(
+    temp_path = path.with_suffix(f"{path.suffix}.{uuid4().hex}.tmp")
+    temp_path.write_text(content, encoding="utf-8")
+    temp_path.replace(path)
+
+
+def write_json(path: Path, payload: Any) -> None:
+    _atomic_write_text(
+        path,
         json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=False) + "\n",
-        encoding="utf-8",
     )
 
 
@@ -110,10 +116,9 @@ def read_yaml(path: Path, default: Any = None) -> Any:
 
 def write_yaml(path: Path, payload: Any) -> None:
     require_yaml()
-    ensure_dir(path.parent)
-    path.write_text(
+    _atomic_write_text(
+        path,
         yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
     )
 
 

@@ -259,8 +259,8 @@ export function compileLabStartPrompt(input: LabStartTemplateInput) {
   const baselineContext =
     normalized.baseline_source === 'existing'
       ? normalized.baseline_root_id
-        ? `Use existing baseline_root_id: ${normalized.baseline_root_id}. Download/restore this baseline first, then verify reproducibility before new experiments.`
-        : 'Existing baseline selected, but baseline_root_id is missing. Ask user to confirm.'
+        ? `Selected reusable baseline: ${normalized.baseline_root_id}. Runtime should attach and confirm this baseline before the quest starts. Reuse it by default and do not redo baseline discovery or reproduction unless you find a concrete incompatibility, corruption, or missing-evidence problem.`
+        : 'Existing reusable baseline mode is selected, but the baseline id is missing. Ask the user to confirm the intended baseline before starting.'
       : normalized.baseline_source === 'url'
         ? normalized.baseline_urls && normalized.baseline_urls.length > 0
           ? normalized.baseline_urls.map((url) => `- ${url}`).join('\n')

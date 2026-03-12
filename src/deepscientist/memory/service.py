@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -158,7 +159,9 @@ class MemoryService:
         limit: int = 20,
         kind: str | None = None,
     ) -> list[dict]:
-        return self.list_cards(scope=scope, quest_root=quest_root, limit=limit, kind=kind)
+        cards = self.list_cards(scope=scope, quest_root=quest_root, limit=5000, kind=kind)
+        cards.sort(key=self._card_sort_key, reverse=True)
+        return cards[:limit]
 
     def search(
         self,
@@ -183,6 +186,7 @@ class MemoryService:
                     match = dict(card)
                     match["scope"] = resolved_scope
                     matches.append(match)
+        matches.sort(key=self._card_sort_key, reverse=True)
         return matches[:limit]
 
     def promote_to_global(
@@ -223,3 +227,12 @@ class MemoryService:
                 "excerpt": body.strip().splitlines()[0] if body.strip() else "",
             },
         )
+
+    @staticmethod
+    def _card_sort_key(card: dict[str, Any]) -> tuple[float, str]:
+        updated_at = str(card.get("updated_at") or "").strip()
+        try:
+            parsed = datetime.fromisoformat(updated_at).timestamp() if updated_at else float("-inf")
+        except ValueError:
+            parsed = float("-inf")
+        return parsed, str(card.get("path") or "")

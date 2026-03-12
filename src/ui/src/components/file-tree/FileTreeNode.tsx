@@ -71,6 +71,7 @@ export function FileTreeNode({
   const eyeClass = isWriting ? "is-writing" : "is-reading";
   const { readOnly } = useFileTreeDragContext();
   const isDragging = node.isDragging;
+  const uiMeta = node.data.uiMeta ?? null;
 
   const handlePointerDown = React.useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -155,6 +156,8 @@ export function FileTreeNode({
         node.willReceiveDrop && "will-receive-drop",
         node.state.isFocused && "is-focused",
         isHighlighted && "is-highlighted",
+        uiMeta?.emphasis === "diff" && "is-diff",
+        uiMeta?.emphasis === "scope-root" && "is-scope-root",
         isReading && "is-reading",
         isWriting && "is-writing",
         isMoved && "is-moved",
@@ -233,6 +236,12 @@ export function FileTreeNode({
           {node.data.name}
         </span>
       )}
+
+      {uiMeta?.badge ? (
+        <span className="file-tree-node-badge ml-2 shrink-0">
+          {uiMeta.badge}
+        </span>
+      ) : null}
 
       {(showEye || isWriting || isMoved || isRenamed) && (
         <div className="file-tree-effect-icons ml-2 flex items-center gap-1">
