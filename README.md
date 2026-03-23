@@ -1,14 +1,13 @@
-# DeepScientist
+<h1 align="center">
+  <img src="assets/branding/logo.svg" alt="DeepScientist logo" width="84" />
+  DeepScientist
+</h1>
 
-<p align="center">
-  <img src="assets/branding/logo.svg" alt="DeepScientist logo" width="120" />
-</p>
-
-<p align="center">
+<p>
   <strong>DeepScientist is not just a long-running autonomous scientific discovery system. It is also a persistent research map that lives on your own machine.</strong>
 </p>
 
-<p align="center">
+<p>
   Local-first. Open-source. Git-backed. Built for verifiable computational research.
 </p>
 
@@ -147,7 +146,6 @@ url={https://openreview.net/forum?id=cZFgsLq8Gs}
 | [Dr. Claw](https://github.com/OpenLAIR/dr-claw) | Open-source | ✓ |  | ✓ |  | ✓ |  |
 | [FARS](https://analemma.ai/fars/) | Closed-source | ✓ |  |  |  |  |  |
 | [EvoScientist](https://github.com/EvoScientist/EvoScientist) | Open-source | ✓ |  | ✓ | ✓ | ✓ |  |
-| [PaperClaw](https://github.com/meowscles69/PaperClaw) | Open-source |  |  |  |  |  | ✓ |
 | [ScienceClaw](https://github.com/beita6969/ScienceClaw) | Open-source |  |  |  | ✓ | ✓ |  |
 | [claude-scholar](https://github.com/Galaxy-Dawn/claude-scholar) | Open-source | ✓ |  | ✓ | ✓ |  |  |
 | [Research-Claw](https://github.com/wentorai/Research-Claw) | Open-source | ✓ |  | ✓ | ✓ | ✓ |  |

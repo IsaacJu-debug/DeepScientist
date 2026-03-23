@@ -39,7 +39,6 @@ DeepScientist 灵活且易于使用，支持：
 | [Dr. Claw](https://github.com/OpenLAIR/dr-claw) | Open-source | ✓ |  | ✓ |  | ✓ |  |
 | [FARS](https://analemma.ai/fars/) | Closed-source | ✓ |  |  |  |  |  |
 | [EvoScientist](https://github.com/EvoScientist/EvoScientist) | Open-source | ✓ |  | ✓ | ✓ | ✓ |  |
-| [PaperClaw](https://github.com/meowscles69/PaperClaw) | Open-source |  |  |  |  |  | ✓ |
 | [ScienceClaw](https://github.com/beita6969/ScienceClaw) | Open-source |  |  |  | ✓ | ✓ |  |
 | [claude-scholar](https://github.com/Galaxy-Dawn/claude-scholar) | Open-source | ✓ |  | ✓ | ✓ |  |  |
 | [Research-Claw](https://github.com/wentorai/Research-Claw) | Open-source | ✓ |  | ✓ | ✓ | ✓ |  |
