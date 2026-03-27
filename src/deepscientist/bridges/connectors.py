@@ -781,7 +781,8 @@ class WeixinConnectorBridge(BaseConnectorBridge):
     name = "weixin"
     _MEDIA_ITEM_TYPES = {2, 4, 5}
     _MEDIA_SEND_INITIAL_DELAY_SECONDS = 0.8
-    _MEDIA_SEND_RETRY_DELAYS_SECONDS = (1.5, 3.0)
+    _TEXT_SEND_RETRY_DELAYS_SECONDS = (0.8, 1.5, 3.0)
+    _MEDIA_SEND_RETRY_DELAYS_SECONDS = (1.5, 3.0, 5.0)
 
     def deliver(self, payload: dict[str, Any], config: dict[str, Any]) -> dict[str, Any] | None:
         return self.deliver_direct(payload, config)
@@ -972,7 +973,11 @@ class WeixinConnectorBridge(BaseConnectorBridge):
     @classmethod
     def _retry_delays_for_item(cls, item: dict[str, Any], exc: Exception) -> tuple[float, ...]:
         message = str(exc or "").strip().lower()
-        if "ret=-2" in message and cls._item_type(item) in {4, 5}:
+        if "ret=-2" not in message:
+            return ()
+        if cls._item_type(item) == 1:
+            return cls._TEXT_SEND_RETRY_DELAYS_SECONDS
+        if cls._item_type(item) in {2, 4, 5}:
             return cls._MEDIA_SEND_RETRY_DELAYS_SECONDS
         return ()
 

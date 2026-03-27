@@ -2747,9 +2747,12 @@ def test_artifact_interact_routes_to_weixin_connector(temp_home: Path, monkeypat
                 "timeout_ms": timeout_ms,
             }
         )
+        if len(sends) == 1:
+            raise RuntimeError("Weixin sendmessage failed with ret=-2 errcode=0")
         return {}
 
     monkeypatch.setattr("deepscientist.bridges.connectors.send_weixin_message", fake_send_weixin_message)
+    monkeypatch.setattr("deepscientist.bridges.connectors.time.sleep", lambda _seconds: None)
 
     result = artifact.interact(
         quest_root,
@@ -2763,7 +2766,7 @@ def test_artifact_interact_routes_to_weixin_connector(temp_home: Path, monkeypat
     assert result["preferred_connector"] == "weixin"
     assert result["delivery_policy"] == "primary_only"
     assert result["delivery_targets"] == ["weixin:direct:wx-user-1@im.wechat"]
-    assert len(sends) == 1
+    assert len(sends) == 2
     assert sends[0]["token"] == "wx-token"
     assert sends[0]["body"]["msg"]["to_user_id"] == "wx-user-1@im.wechat"
     assert sends[0]["body"]["msg"]["context_token"] == "ctx-token-1"
