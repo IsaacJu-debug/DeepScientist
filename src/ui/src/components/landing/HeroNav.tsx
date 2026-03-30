@@ -11,7 +11,6 @@ import { cn } from '@/lib/utils'
 
 export default function HeroNav() {
   const { locale, toggleLocale, t } = useI18n()
-  const tutorialLanguage = useOnboardingStore((state) => state.language)
   const restartTutorial = useOnboardingStore((state) => state.restartTutorial)
   const openChooser = useOnboardingStore((state) => state.openChooser)
 
@@ -61,11 +60,8 @@ export default function HeroNav() {
             size="sm"
             className="hidden h-9 rounded-full border-black/10 bg-white/60 text-[#2D2A26] hover:bg-white/90 sm:inline-flex"
             onClick={() => {
-              if (tutorialLanguage === 'zh' || tutorialLanguage === 'en') {
-                restartTutorial('/', tutorialLanguage)
-                return
-              }
-              openChooser('manual')
+              const nextLanguage = locale === 'zh' ? 'zh' : 'en'
+              restartTutorial('/', nextLanguage)
             }}
             data-onboarding-id="landing-replay-tutorial"
           >

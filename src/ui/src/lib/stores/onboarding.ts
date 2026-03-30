@@ -149,8 +149,16 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   restartTutorial: (pathname, language) => {
     const nextLanguage = resolveLanguage(language ?? get().language)
     void useUILanguageStore.getState().saveLanguagePreference(nextLanguage)
-    set({
+    const nextPersistence: OnboardingPersistence = {
+      firstRunHandled: true,
+      completed: get().completed,
+      neverRemind: get().neverRemind,
       language: nextLanguage,
+    }
+    writePersistence(nextPersistence)
+    set({
+      ...nextPersistence,
+      hydrated: true,
       status: 'running',
       stepIndex: resolveStartStepIndex(pathname),
       startedFrom: 'manual',
