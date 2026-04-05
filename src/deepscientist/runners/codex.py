@@ -204,7 +204,9 @@ def _iter_event_texts(event: dict[str, Any]) -> list[str]:
                     if isinstance(value, str) and value.strip():
                         texts.append(value)
     delta = event.get("delta")
-    if isinstance(delta, dict):
+    if isinstance(delta, str) and delta.strip():
+        texts.append(delta)
+    elif isinstance(delta, dict):
         for key in ("text", "content"):
             value = delta.get(key)
             if isinstance(value, str) and value.strip():
@@ -231,6 +233,36 @@ def _web_search_text_payload(item: dict[str, Any]) -> str:
     return _compact_text(payload, limit=2400)
 
 
+def _message_stream_id(event: dict[str, Any], item: dict[str, Any], *, run_id: str, kind: str) -> str:
+    for value in (
+        event.get("stream_id"),
+        item.get("stream_id"),
+        event.get("message_id"),
+        item.get("message_id"),
+        event.get("item_id"),
+        item.get("id"),
+        event.get("output_item_id"),
+        event.get("response_id"),
+    ):
+        if value:
+            return str(value)
+    normalized_kind = str(kind or "message").strip().lower() or "message"
+    return f"{run_id}:{normalized_kind}"
+
+
+def _message_id(event: dict[str, Any], item: dict[str, Any], *, stream_id: str) -> str:
+    for value in (
+        event.get("message_id"),
+        item.get("message_id"),
+        event.get("item_id"),
+        item.get("id"),
+        event.get("output_item_id"),
+    ):
+        if value:
+            return str(value)
+    return stream_id
+
+
 def _message_events(
     event: dict[str, Any],
     *,
@@ -247,6 +279,8 @@ def _message_events(
 
     if item_type == "agent_message":
         texts = _dedupe_texts(_iter_event_texts(event))
+        stream_id = _message_stream_id(event, item, run_id=run_id, kind="assistant")
+        message_id = _message_id(event, item, stream_id=stream_id)
         for text in texts:
             quest_events.append(
                 {
@@ -257,6 +291,8 @@ def _message_events(
                     "source": "codex",
                     "skill_id": skill_id,
                     "text": text,
+                    "stream_id": stream_id,
+                    "message_id": message_id,
                     "created_at": created_at,
                 }
             )
@@ -264,6 +300,8 @@ def _message_events(
 
     if item_type in {"reasoning", "reasoning_summary"} or "reasoning" in event_type:
         texts = _dedupe_texts(_iter_event_texts(event))
+        stream_id = _message_stream_id(event, item, run_id=run_id, kind=item_type or "reasoning")
+        message_id = _message_id(event, item, stream_id=stream_id)
         for text in texts:
             quest_events.append(
                 {
@@ -274,6 +312,8 @@ def _message_events(
                     "source": "codex",
                     "skill_id": skill_id,
                     "text": text,
+                    "stream_id": stream_id,
+                    "message_id": message_id,
                     "kind": item_type or "reasoning",
                     "created_at": created_at,
                 }
@@ -287,6 +327,8 @@ def _message_events(
         return [], []
 
     texts = _dedupe_texts(_iter_event_texts(event))
+    stream_id = _message_stream_id(event, item, run_id=run_id, kind="assistant")
+    message_id = _message_id(event, item, stream_id=stream_id)
     for text in texts:
         quest_events.append(
             {
@@ -297,6 +339,8 @@ def _message_events(
                 "source": "codex",
                 "skill_id": skill_id,
                 "text": text,
+                "stream_id": stream_id,
+                "message_id": message_id,
                 "created_at": created_at,
             }
         )

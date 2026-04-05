@@ -13,7 +13,7 @@ You will do four things:
 
 The screenshots in this guide use the current live web UI at `deepscientist.cc:20999` as an example. Your local UI at `127.0.0.1:20999` should look the same or very close.
 
-Current platform support: DeepScientist fully supports Linux and macOS. Native Windows support is currently experimental; WSL2 remains the most battle-tested option when you need the closest Linux-like terminal behavior.
+Current platform support: DeepScientist fully supports Linux and macOS. Native Windows support is currently experimental (strongly recommend WSL2 when you want the closest Linux-like terminal behavior).
 
 ## Safety First: Isolate Before You Start
 
@@ -60,7 +60,7 @@ If you plan to use a provider-backed Codex profile instead of the default OpenAI
 
 ## 1. Install Node.js and DeepScientist
 
-DeepScientist fully supports Linux and macOS. Native Windows support is currently experimental, and WSL2 is still the most battle-tested option when you want Linux-like shell behavior.
+DeepScientist fully supports Linux and macOS. Native Windows support is currently experimental (strongly recommend WSL2 when you want the most reliable Linux-like shell behavior).
 
 Before installing DeepScientist itself, install Node.js from the official page:
 
@@ -84,6 +84,15 @@ DeepScientist depends on a working Codex CLI. It prefers the `codex` already ava
 ```bash
 npm install -g @openai/codex
 ```
+
+If you want the most reliable path, verify the command immediately:
+
+```bash
+which codex
+codex --login
+```
+
+If `which codex` prints nothing, the issue is usually the npm global bin path rather than DeepScientist itself. Fix the shell PATH first, then rerun `npm install -g @openai/codex`.
 
 If you want local PDF compilation later, also run:
 
@@ -203,13 +212,14 @@ ds --port 21000
 
 This keeps everything the same, but serves the web UI on port `21000`.
 
-By default, the local web UI is:
+By default, DeepScientist starts without a local browser password gate.
 
-```text
-http://127.0.0.1:20999
-```
-
-If the browser does not open automatically, paste that address into your browser manually.
+- open the normal local URL manually if the browser does not open automatically, such as `http://127.0.0.1:20999`
+- if you want a generated local browser password for one launch, run `ds --auth true`
+- on authenticated launches, DeepScientist prints the generated password in the terminal
+- if the browser is not authenticated yet, DeepScientist shows a password modal before loading the landing page and workspace
+- after the first successful login, the browser keeps the local session and later visits usually do not need the password again
+- if you need to look up the password again for an authenticated launch, check the launch terminal or run `ds --status`
 
 ## 4. Open the Home Page
 
@@ -223,10 +233,18 @@ After 12 hours of running, the projects surface will often look more like this:
 
 The two main entry points are:
 
-- `Start Research`: create a new project and launch a new research run
+- `Start Research` or `Start Experiment`: begin a new project flow
 - `Open Project`: reopen an existing project
 
-For your first run, click `Start Research`.
+For your first run, click `Start Research` or `Start Experiment`.
+
+Important update:
+
+- the product now asks you to choose a start style first
+- `Copilot` creates a quieter project that waits for your first instruction
+- `Autonomous` creates the standard DeepScientist project and starts moving immediately
+
+If you are unsure which one to choose, read [20 Workspace Modes Guide](./20_WORKSPACE_MODES_GUIDE.md) first.
 
 ## 5. Create Your First Project With A Worked Example
 
@@ -239,7 +257,7 @@ The example task is:
 - study how to improve truth-preserving collaboration under mixed correct and incorrect social signals
 - use two local inference endpoints to keep throughput high
 
-Click `Start Research` to open the dialog.
+Click `Start Research` / `Start Experiment`, then choose `Autonomous Mode` to follow the flow below.
 
 ![Start Research dialog](../images/quickstart/01-start-research.png)
 

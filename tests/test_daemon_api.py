@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from http.cookiejar import CookieJar
 import io
 import json
 import os
@@ -14,7 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import Request, urlopen
+from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
 
 import pytest
 from websockets.sync.client import connect as websocket_connect
@@ -39,6 +40,24 @@ def _get_json(url: str):
         return json.loads(response.read().decode("utf-8"))
 
 
+def _open_json_with_opener(opener, request):  # noqa: ANN001
+    with opener.open(request) as response:  # noqa: S310
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _wait_for_http_ready(url: str, *, timeout_seconds: float = 5.0) -> int:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        try:
+            with urlopen(url) as response:  # noqa: S310
+                return int(response.status)
+        except HTTPError as exc:
+            return int(exc.code)
+        except URLError:
+            time.sleep(0.05)
+    raise AssertionError(url)
+
+
 def _pick_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -60,6 +79,43 @@ class _FakeSseHandler:
 
     def end_headers(self) -> None:
         return
+
+
+class _BrokenPipeWriter:
+    def write(self, _payload: bytes) -> None:
+        raise BrokenPipeError(32, "Broken pipe")
+
+
+class _BrokenPipeHandler(_FakeSseHandler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.wfile = _BrokenPipeWriter()
+
+
+class _ClosableCaptureWriter:
+    def __init__(self) -> None:
+        self.buffer = io.BytesIO()
+        self.closed = False
+
+    def write(self, payload: bytes) -> int:
+        if self.closed:
+            raise BrokenPipeError(32, "closed")
+        return self.buffer.write(payload)
+
+    def flush(self) -> None:
+        return
+
+    def close_stream(self) -> None:
+        self.closed = True
+
+    def getvalue(self) -> bytes:
+        return self.buffer.getvalue()
+
+
+class _ClosableSseHandler(_FakeSseHandler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.wfile = _ClosableCaptureWriter()
 
 
 def _parse_sse_events(raw: bytes) -> list[dict[str, object]]:
@@ -111,10 +167,221 @@ class _FakeUrlopenResponse:
         return self._body
 
 
-def test_handlers_quest_layout_roundtrip(temp_home: Path) -> None:
+def test_daemon_browser_auth_query_token_bootstraps_cookie_session(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home, browser_auth_enabled=True, browser_auth_token="0123456789abcdef")
+    app._start_background_connectors = lambda: None  # type: ignore[method-assign]
+    app._stop_background_connectors = lambda: None  # type: ignore[method-assign]
+    app._start_terminal_attach_server = lambda host, port: None  # type: ignore[method-assign]
+    app._stop_terminal_attach_server = lambda: None  # type: ignore[method-assign]
+
+    port = _pick_free_port()
+    base_url = f"http://127.0.0.1:{port}"
+    server_thread = threading.Thread(target=app.serve, args=("127.0.0.1", port), daemon=True)
+    server_thread.start()
+    try:
+        _wait_for_http_ready(f"{base_url}/")
+        with pytest.raises(HTTPError) as exc_info:
+            urlopen(f"{base_url}/api/health")  # noqa: S310
+        assert exc_info.value.code == 401
+
+        cookie_jar = CookieJar()
+        opener = build_opener(HTTPCookieProcessor(cookie_jar))
+        with opener.open(f"{base_url}/?token=0123456789abcdef") as response:  # noqa: S310
+            html = response.read().decode("utf-8")
+        assert "DeepScientist UI bundle is not built yet" in html or "window.__DEEPSCIENTIST_RUNTIME__" in html
+        assert any(cookie.name == "ds_local_auth" for cookie in cookie_jar)
+
+        health = _open_json_with_opener(opener, f"{base_url}/api/health")
+        assert health["status"] == "ok"
+        assert health["auth_enabled"] is True
+
+        token_payload = _open_json_with_opener(opener, f"{base_url}/api/auth/token")
+        assert token_payload["token"] == "0123456789abcdef"
+        assert token_payload["auth_enabled"] is True
+    finally:
+        app.request_shutdown(source="test-browser-auth-query-token")
+        server_thread.join(timeout=10)
+        assert not server_thread.is_alive()
+
+
+def test_daemon_browser_auth_login_route_sets_cookie_for_subsequent_api_calls(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home, browser_auth_enabled=True, browser_auth_token="fedcba9876543210")
+    app._start_background_connectors = lambda: None  # type: ignore[method-assign]
+    app._stop_background_connectors = lambda: None  # type: ignore[method-assign]
+    app._start_terminal_attach_server = lambda host, port: None  # type: ignore[method-assign]
+    app._stop_terminal_attach_server = lambda: None  # type: ignore[method-assign]
+    created = app.quest_service.create("browser auth login quest")
+
+    port = _pick_free_port()
+    base_url = f"http://127.0.0.1:{port}"
+    server_thread = threading.Thread(target=app.serve, args=("127.0.0.1", port), daemon=True)
+    server_thread.start()
+    try:
+        _wait_for_http_ready(f"{base_url}/")
+        with pytest.raises(HTTPError) as exc_info:
+            urlopen(f"{base_url}/api/quests")  # noqa: S310
+        assert exc_info.value.code == 401
+
+        cookie_jar = CookieJar()
+        opener = build_opener(HTTPCookieProcessor(cookie_jar))
+        login_request = Request(
+            f"{base_url}/api/auth/login",
+            data=json.dumps({"token": "fedcba9876543210"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        login_payload = _open_json_with_opener(opener, login_request)
+        assert login_payload["ok"] is True
+        assert login_payload["authenticated"] is True
+        assert any(cookie.name == "ds_local_auth" for cookie in cookie_jar)
+
+        quests = _open_json_with_opener(opener, f"{base_url}/api/quests")
+        assert any(item["quest_id"] == created["quest_id"] for item in quests)
+    finally:
+        app.request_shutdown(source="test-browser-auth-login")
+        server_thread.join(timeout=10)
+        assert not server_thread.is_alive()
+
+
+def test_stream_quest_events_emits_acp_update_for_new_message(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home, browser_auth_enabled=False)
+    app._start_background_connectors = lambda: None  # type: ignore[method-assign]
+    app._stop_background_connectors = lambda: None  # type: ignore[method-assign]
+    app._start_terminal_attach_server = lambda host, port: None  # type: ignore[method-assign]
+    app._stop_terminal_attach_server = lambda: None  # type: ignore[method-assign]
+    quest = app.quest_service.create("stream quest events quest")
+    quest_id = quest["quest_id"]
+
+    seed_payload = app.handlers.quest_events(
+        quest_id,
+        path=f"/api/quests/{quest_id}/events?format=raw&limit=1&tail=1",
+    )
+    after = int(seed_payload.get("cursor") or 0)
+    handler = _ClosableSseHandler()
+    thread = threading.Thread(
+        target=app.stream_quest_events,
+        args=(handler,),
+        kwargs={
+            "quest_id": quest_id,
+            "path": f"/api/quests/{quest_id}/events?after={after}&format=acp&session_id=quest:{quest_id}&stream=1",
+        },
+        daemon=True,
+    )
+    thread.start()
+    time.sleep(0.2)
+    app.quest_service.append_message(
+        quest_id,
+        role="user",
+        content="stream test message",
+        source="web-react",
+        client_message_id="stream-test-001",
+    )
+    deadline = time.time() + 5.0
+    raw_payload = b""
+    while time.time() < deadline:
+        raw_payload = handler.wfile.getvalue()
+        if b"event: acp_update" in raw_payload:
+            break
+        time.sleep(0.05)
+    handler.wfile.close_stream()
+    thread.join(timeout=2)
+
+    parsed = _parse_sse_events(raw_payload)
+    assert any(item["event"] == "acp_update" for item in parsed)
+    acp_updates = [item["data"] for item in parsed if item["event"] == "acp_update"]
+    assert any(
+        ((update.get("params") or {}).get("update") or {}).get("kind") == "message"
+        and (((update.get("params") or {}).get("update") or {}).get("message") or {}).get("content") == "stream test message"
+        for update in acp_updates
+    )
+
+
+def test_daemon_browser_auth_rotate_invalidates_previous_token_and_refreshes_cookie(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home, browser_auth_enabled=True, browser_auth_token="1111222233334444")
+    app._start_background_connectors = lambda: None  # type: ignore[method-assign]
+    app._stop_background_connectors = lambda: None  # type: ignore[method-assign]
+    app._start_terminal_attach_server = lambda host, port: None  # type: ignore[method-assign]
+    app._stop_terminal_attach_server = lambda: None  # type: ignore[method-assign]
+
+    port = _pick_free_port()
+    base_url = f"http://127.0.0.1:{port}"
+    server_thread = threading.Thread(target=app.serve, args=("127.0.0.1", port), daemon=True)
+    server_thread.start()
+    try:
+        _wait_for_http_ready(f"{base_url}/")
+        cookie_jar = CookieJar()
+        opener = build_opener(HTTPCookieProcessor(cookie_jar))
+        rotate_request = Request(
+            f"{base_url}/api/auth/rotate",
+            data=b"{}",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer 1111222233334444",
+            },
+            method="POST",
+        )
+        rotate_payload = _open_json_with_opener(opener, rotate_request)
+        rotated_token = str(rotate_payload["token"])
+        assert rotate_payload["ok"] is True
+        assert rotate_payload["rotated"] is True
+        assert rotated_token != "1111222233334444"
+        assert any(cookie.name == "ds_local_auth" and cookie.value == rotated_token for cookie in cookie_jar)
+
+        with pytest.raises(HTTPError) as exc_info:
+            urlopen(Request(f"{base_url}/api/health", headers={"Authorization": "Bearer 1111222233334444"}))  # noqa: S310
+        assert exc_info.value.code == 401
+
+        health_with_cookie = _open_json_with_opener(opener, f"{base_url}/api/health")
+        assert health_with_cookie["status"] == "ok"
+
+        with urlopen(Request(f"{base_url}/api/health", headers={"Authorization": f"Bearer {rotated_token}"})) as response:  # noqa: S310
+            health_with_rotated_token = json.loads(response.read().decode("utf-8"))
+        assert health_with_rotated_token["status"] == "ok"
+    finally:
+        app.request_shutdown(source="test-browser-auth-rotate")
+        server_thread.join(timeout=10)
+        assert not server_thread.is_alive()
+
+
+def test_daemon_defaults_browser_auth_to_false(temp_home: Path) -> None:
     ensure_home_layout(temp_home)
     ConfigManager(temp_home).ensure_files()
     app = DaemonApp(temp_home)
+
+    assert app.browser_auth_enabled is False
+    assert app.browser_auth_token is None
+
+
+def test_write_handler_response_swallows_client_disconnects(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home, browser_auth_enabled=False)
+    handler = _BrokenPipeHandler()
+
+    written = app._write_handler_response(
+        handler,
+        code=200,
+        content=b'{"ok":true}',
+        content_type="application/json; charset=utf-8",
+    )
+
+    assert written is False
+    assert handler.status_code == 200
+    assert handler.close_connection is True
+
+
+def test_handlers_quest_layout_roundtrip(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home, browser_auth_enabled=False)
     quest = app.quest_service.create("layout roundtrip quest")
     quest_id = quest["quest_id"]
 
@@ -190,7 +457,7 @@ def test_document_asset_resolves_path_documents_from_active_worktree(
 def test_handlers_workflow_includes_optimization_frontier_when_available(temp_home: Path) -> None:
     ensure_home_layout(temp_home)
     ConfigManager(temp_home).ensure_files()
-    app = DaemonApp(temp_home)
+    app = DaemonApp(temp_home, browser_auth_enabled=False)
     quest = app.quest_service.create(
         "workflow frontier quest",
         startup_contract={"need_research_paper": False},
@@ -281,6 +548,60 @@ def test_turn_skill_for_rejects_experiment_without_durable_idea_in_paper_mode() 
     assert DaemonApp._turn_skill_for(snapshot, None, turn_reason="auto_continue", turn_mode="stage_execution") == "idea"
 
 
+def test_turn_skill_for_copilot_direct_question_does_not_default_to_decision() -> None:
+    snapshot = {
+        "workspace_mode": "copilot",
+        "active_anchor": "baseline",
+        "continuation_anchor": "decision",
+        "baseline_gate": "pending",
+        "startup_contract": {
+            "workspace_mode": "copilot",
+        },
+    }
+    latest_user_message = {
+        "role": "user",
+        "content": "Can you inspect this repo and tell me what changed?",
+        "source": "web-react",
+    }
+
+    assert (
+        DaemonApp._turn_skill_for(
+            snapshot,
+            latest_user_message,
+            turn_reason="user_message",
+            turn_mode="answering",
+        )
+        == "baseline"
+    )
+
+
+def test_turn_skill_for_copilot_direct_command_does_not_default_to_decision() -> None:
+    snapshot = {
+        "workspace_mode": "copilot",
+        "active_anchor": "baseline",
+        "continuation_anchor": "decision",
+        "baseline_gate": "pending",
+        "startup_contract": {
+            "workspace_mode": "copilot",
+        },
+    }
+    latest_user_message = {
+        "role": "user",
+        "content": "Please test git in this workspace.",
+        "source": "web-react",
+    }
+
+    assert (
+        DaemonApp._turn_skill_for(
+            snapshot,
+            latest_user_message,
+            turn_reason="user_message",
+            turn_mode="command_execution",
+        )
+        == "baseline"
+    )
+
+
 def _wait_for_json(url: str, *, timeout: float = 10.0) -> dict | list:
     deadline = time.time() + timeout
     last_error: Exception | None = None
@@ -312,7 +633,7 @@ def _wait_for_projection_ready(loader, *, timeout: float = 5.0):
 def test_workflow_projection_returns_placeholder_then_ready(temp_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ensure_home_layout(temp_home)
     ConfigManager(temp_home).ensure_files()
-    app = DaemonApp(temp_home)
+    app = DaemonApp(temp_home, browser_auth_enabled=False)
     quest = app.quest_service.create("workflow projection quest")
     quest_id = quest["quest_id"]
     service = app.quest_service
@@ -341,10 +662,39 @@ def test_workflow_projection_returns_placeholder_then_ready(temp_home: Path, mon
     assert any(path.endswith("/brief.md") for path in changed_paths)
 
 
+def test_git_commit_canvas_returns_commits_and_projection_status(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home, browser_auth_enabled=False)
+    quest = app.quest_service.create(
+        "git canvas quest",
+        startup_contract={"workspace_mode": "copilot"},
+    )
+    quest_id = quest["quest_id"]
+    quest_root = Path(quest["quest_root"])
+    app.quest_service.update_research_state(quest_root, workspace_mode="copilot")
+    artifact = ArtifactService(temp_home)
+
+    write_json(quest_root / "artifacts" / "reports" / "git-canvas-report.json", {"ok": True})
+    artifact.checkpoint(quest_root, "git canvas first commit")
+
+    write_json(quest_root / "memory" / "notes" / "git-canvas-note.json", {"status": "updated"})
+    artifact.checkpoint(quest_root, "git canvas second commit")
+
+    payload = _wait_for_projection_ready(lambda: app.handlers.git_canvas(quest_id))
+    assert payload["quest_id"] == quest_id
+    assert payload["workspace_mode"] == "copilot"
+    assert str(((payload or {}).get("projection_status") or {}).get("state") or "").strip().lower() == "ready"
+    assert len(payload["nodes"]) >= 2
+    assert payload["nodes"][0]["selection_type"] == "git_commit_node"
+    assert payload["nodes"][0]["compare_head"]
+    assert any(node["subject"] == "git canvas second commit" for node in payload["nodes"])
+
+
 def test_quest_session_prewarms_details_and_canvas_projections(temp_home: Path) -> None:
     ensure_home_layout(temp_home)
     ConfigManager(temp_home).ensure_files()
-    app = DaemonApp(temp_home)
+    app = DaemonApp(temp_home, browser_auth_enabled=False)
     quest = app.quest_service.create("session prewarm quest")
     quest_id = quest["quest_id"]
     quest_root = Path(quest["quest_root"])
@@ -358,7 +708,7 @@ def test_quest_session_prewarms_details_and_canvas_projections(temp_home: Path) 
     while time.time() < deadline:
         manifest = read_json(manifest_path, {})
         projections = manifest.get("projections") if isinstance(manifest, dict) else {}
-        if isinstance(projections, dict) and {"details", "canvas"}.issubset(projections.keys()):
+        if isinstance(projections, dict) and {"details", "canvas", "git_canvas"}.issubset(projections.keys()):
             break
         time.sleep(0.05)
 
@@ -366,6 +716,22 @@ def test_quest_session_prewarms_details_and_canvas_projections(temp_home: Path) 
     assert isinstance(projections, dict)
     assert "details" in projections
     assert "canvas" in projections
+    assert "git_canvas" in projections
+
+
+def test_quest_session_snapshot_preserves_copilot_workspace_mode(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home, browser_auth_enabled=False)
+    quest = app.quest_service.create(
+        "copilot session quest",
+        startup_contract={"workspace_mode": "copilot"},
+    )
+
+    session = app.handlers.quest_session(quest["quest_id"])
+
+    assert session["ok"] is True
+    assert session["snapshot"]["workspace_mode"] == "copilot"
 
 
 def test_runtime_state_update_schedules_details_projection_refresh(
@@ -374,7 +740,7 @@ def test_runtime_state_update_schedules_details_projection_refresh(
 ) -> None:
     ensure_home_layout(temp_home)
     ConfigManager(temp_home).ensure_files()
-    app = DaemonApp(temp_home)
+    app = DaemonApp(temp_home, browser_auth_enabled=False)
     quest = app.quest_service.create("runtime projection refresh quest")
     quest_root = Path(quest["quest_root"])
     queued: list[str] = []
@@ -401,7 +767,7 @@ def test_research_state_update_schedules_details_and_canvas_projection_refresh(
 ) -> None:
     ensure_home_layout(temp_home)
     ConfigManager(temp_home).ensure_files()
-    app = DaemonApp(temp_home)
+    app = DaemonApp(temp_home, browser_auth_enabled=False)
     quest = app.quest_service.create("research projection refresh quest")
     quest_root = Path(quest["quest_root"])
     queued: list[str] = []
@@ -507,7 +873,7 @@ def test_daemon_update_status_uses_launcher_json_contract(
 
     monkeypatch.setattr("deepscientist.daemon.app.subprocess.run", _fake_run)
 
-    app = DaemonApp(temp_home)
+    app = DaemonApp(temp_home, browser_auth_enabled=False)
     payload = app.system_update_status()
 
     assert payload["latest_version"] == "1.5.3"
@@ -544,7 +910,7 @@ def test_daemon_update_request_starts_background_worker_with_restart(
 
     monkeypatch.setattr("deepscientist.daemon.app.subprocess.run", _fake_run)
 
-    app = DaemonApp(temp_home)
+    app = DaemonApp(temp_home, browser_auth_enabled=False)
     app._serve_host = "0.0.0.0"
     app._serve_port = 20999
     payload = app.request_system_update(action="install_latest")
@@ -669,7 +1035,7 @@ def test_daemon_http_weixin_qr_wait_accepts_json_body(
 ) -> None:
     ensure_home_layout(temp_home)
     ConfigManager(temp_home).ensure_files()
-    app = DaemonApp(temp_home)
+    app = DaemonApp(temp_home, browser_auth_enabled=False)
     app._start_background_connectors = lambda: None  # type: ignore[method-assign]
     app._stop_background_connectors = lambda: None  # type: ignore[method-assign]
     app._start_terminal_attach_server = lambda host, port: None  # type: ignore[method-assign]
@@ -800,6 +1166,8 @@ def test_daemon_serves_health_and_ui(temp_home: Path, project_root: Path, python
             "127.0.0.1",
             "--port",
             "20901",
+            "--auth",
+            "false",
         ],
         cwd=project_root,
         stdout=subprocess.DEVNULL,
@@ -1038,6 +1406,8 @@ def test_daemon_serves_lingzhu_metis_routes(temp_home: Path, project_root: Path,
             "127.0.0.1",
             "--port",
             "20902",
+            "--auth",
+            "false",
         ],
         cwd=project_root,
         stdout=subprocess.DEVNULL,
@@ -1739,6 +2109,8 @@ def test_daemon_serves_docs_assets(temp_home: Path, project_root: Path, pythonpa
             "127.0.0.1",
             "--port",
             str(port),
+            "--auth",
+            "false",
         ],
         cwd=project_root,
         stdout=subprocess.DEVNULL,
@@ -1833,7 +2205,7 @@ def test_handlers_arxiv_import_and_list_roundtrip(temp_home: Path, monkeypatch: 
 def test_daemon_http_arxiv_list_route_passes_request_path(temp_home: Path) -> None:
     ensure_home_layout(temp_home)
     ConfigManager(temp_home).ensure_files()
-    app = DaemonApp(temp_home)
+    app = DaemonApp(temp_home, browser_auth_enabled=False)
     app._start_background_connectors = lambda: None  # type: ignore[method-assign]
     app._stop_background_connectors = lambda: None  # type: ignore[method-assign]
     app._start_terminal_attach_server = lambda host, port: None  # type: ignore[method-assign]
@@ -1879,7 +2251,7 @@ def test_daemon_http_arxiv_import_route_passes_json_body(
 ) -> None:
     ensure_home_layout(temp_home)
     ConfigManager(temp_home).ensure_files()
-    app = DaemonApp(temp_home)
+    app = DaemonApp(temp_home, browser_auth_enabled=False)
     app._start_background_connectors = lambda: None  # type: ignore[method-assign]
     app._stop_background_connectors = lambda: None  # type: ignore[method-assign]
     app._start_terminal_attach_server = lambda host, port: None  # type: ignore[method-assign]
@@ -2015,7 +2387,7 @@ def test_handlers_annotations_roundtrip_for_quest_file(temp_home: Path) -> None:
 def test_daemon_http_annotations_routes_support_quest_file_ids(temp_home: Path) -> None:
     ensure_home_layout(temp_home)
     ConfigManager(temp_home).ensure_files()
-    app = DaemonApp(temp_home)
+    app = DaemonApp(temp_home, browser_auth_enabled=False)
     app._start_background_connectors = lambda: None  # type: ignore[method-assign]
     app._stop_background_connectors = lambda: None  # type: ignore[method-assign]
     app._start_terminal_attach_server = lambda host, port: None  # type: ignore[method-assign]
@@ -2275,6 +2647,37 @@ def test_quest_create_handler_summary_includes_visible_quest_metadata(temp_home:
     assert "title: Summary visible metadata quest" in summary
 
 
+def test_quest_create_handler_copilot_workspace_starts_idle_and_waits_for_user(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+
+    payload = app.handlers.quest_create(
+        {
+            "goal": "Copilot workspace quest",
+            "title": "Copilot workspace quest",
+            "startup_contract": {
+                "workspace_mode": "copilot",
+                "decision_policy": "user_gated",
+                "launch_mode": "custom",
+                "custom_profile": "freeform",
+            },
+            "auto_start": False,
+        }
+    )
+
+    assert payload["ok"] is True
+    snapshot = payload["snapshot"]
+    assert snapshot["workspace_mode"] == "copilot"
+    assert snapshot["continuation_policy"] == "wait_for_user_or_resume"
+    assert snapshot["continuation_anchor"] == "decision"
+    assert snapshot["continuation_reason"] == "copilot_mode"
+    assert snapshot["runtime_status"] == "idle"
+    assert snapshot["status"] == "idle"
+    status_md = (temp_home / "quests" / snapshot["quest_id"] / "status.md").read_text(encoding="utf-8")
+    assert "Ready for your first instruction." in status_md
+
+
 def test_quest_settings_handler_updates_quest_yaml(temp_home: Path) -> None:
     ensure_home_layout(temp_home)
     ConfigManager(temp_home).ensure_files()
@@ -2479,8 +2882,8 @@ def test_quest_bindings_handler_announces_switch_to_old_and_new_connectors(temp_
     assert payload["binding_transition"]["mode"] == "switch"
     qq_outbox = read_jsonl(temp_home / "logs" / "connectors" / "qq" / "outbox.jsonl")
     telegram_outbox = read_jsonl(temp_home / "logs" / "connectors" / "telegram" / "outbox.jsonl")
-    assert any("当前已退出 Quest" in str(item.get("text") or "") for item in qq_outbox)
-    assert any("当前已绑定 Quest" in str(item.get("text") or "") for item in telegram_outbox)
+    assert any("已经从这里切走啦" in str(item.get("text") or "") for item in qq_outbox)
+    assert any("已经切到这里啦" in str(item.get("text") or "") for item in telegram_outbox)
 
 
 def test_auto_bind_does_not_override_existing_external_connector_without_explicit_switch(temp_home: Path) -> None:
@@ -2836,7 +3239,24 @@ def test_terminal_attach_websocket_smoke_supports_live_python_io(temp_home: Path
         assert attach["ok"] is True
         ws_url = f"ws://127.0.0.1:{attach['port']}{attach['path']}?token={attach['token']}"
         with websocket_connect(ws_url, open_timeout=5, close_timeout=2, max_size=None) as websocket:
-            ready = json.loads(websocket.recv())
+            def _read_until_ready(*, timeout: float = 5.0) -> dict[str, object]:
+                deadline = time.time() + timeout
+                while time.time() < deadline:
+                    try:
+                        message = websocket.recv(timeout=1)
+                    except TimeoutError:
+                        continue
+                    if isinstance(message, bytes):
+                        continue
+                    try:
+                        payload = json.loads(message)
+                    except Exception:
+                        continue
+                    if isinstance(payload, dict) and payload.get("type") == "ready":
+                        return payload
+                raise AssertionError("Timed out waiting for terminal ready frame.")
+
+            ready = _read_until_ready()
             assert ready["type"] == "ready"
 
             def _read_until_contains(needle: str, *, timeout: float = 10.0) -> str:
@@ -3549,6 +3969,59 @@ def test_chat_endpoint_persists_client_message_delivery_state(temp_home: Path) -
     event = next(item for item in events if item.get("type") == "conversation.message" and item.get("content") == "Track this message.")
     assert event["client_message_id"] == "client-msg-001"
     assert event["delivery_state"] == "sent"
+
+
+def test_quest_events_acp_message_updates_preserve_stream_identity(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+    quest = app.quest_service.create("stream identity quest")
+    quest_id = quest["quest_id"]
+    events_path = Path(quest["quest_root"]) / ".ds" / "events.jsonl"
+
+    append_jsonl(
+        events_path,
+        {
+            "event_id": "evt-stream-001",
+            "type": "runner.delta",
+            "quest_id": quest_id,
+            "run_id": "run-001",
+            "source": "codex",
+            "skill_id": "baseline",
+            "text": "Streaming draft",
+            "stream_id": "msg-001",
+            "message_id": "msg-001",
+            "created_at": utc_now(),
+        },
+    )
+    append_jsonl(
+        events_path,
+        {
+            "event_id": "evt-stream-002",
+            "type": "runner.agent_message",
+            "quest_id": quest_id,
+            "run_id": "run-001",
+            "source": "codex",
+            "skill_id": "baseline",
+            "text": "Streaming draft",
+            "stream_id": "msg-001",
+            "message_id": "msg-001",
+            "created_at": utc_now(),
+        },
+    )
+
+    payload = app.handlers.quest_events(
+        quest_id,
+        path=f"/api/quests/{quest_id}/events?format=acp&session_id=session:test",
+    )
+    updates = [item["params"]["update"] for item in payload["acp_updates"]]
+    delta_update = next(item for item in updates if item["event_type"] == "runner.delta")
+    final_update = next(item for item in updates if item["event_type"] == "runner.agent_message")
+
+    assert delta_update["message"]["stream_id"] == "msg-001"
+    assert delta_update["message"]["message_id"] == "msg-001"
+    assert final_update["message"]["stream_id"] == "msg-001"
+    assert final_update["message"]["message_id"] == "msg-001"
 
 
 def test_chat_endpoint_passes_user_text_into_codex_prompt(temp_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4296,13 +4769,105 @@ def test_auto_continue_parks_after_repeated_unchanged_finalize_state(temp_home: 
     first_snapshot = app.quest_service.snapshot(quest_id)
     assert first_snapshot["same_fingerprint_auto_turn_count"] == 1
     assert first_snapshot["continuation_policy"] == "auto"
+    assert first_snapshot["continuation_reason"] == "autonomous_prepare_or_launch_long_run"
 
     app._normalize_status_after_turn(quest_id, turn_reason="auto_continue")
     second_snapshot = app.quest_service.snapshot(quest_id)
-    assert second_snapshot["same_fingerprint_auto_turn_count"] >= 2
     assert second_snapshot["continuation_policy"] == "wait_for_user_or_resume"
-    assert second_snapshot["continuation_anchor"] == "decision"
     assert second_snapshot["continuation_reason"] == "unchanged_finalize_state"
+
+
+def test_autonomous_auto_continue_keeps_running_without_external_progress(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+    quest = app.quest_service.create("autonomous auto continue without external progress quest")
+    quest_id = quest["quest_id"]
+    quest_root = Path(quest["quest_root"])
+
+    app.quest_service.set_continuation_state(
+        quest_root,
+        policy="auto",
+        anchor="experiment",
+        reason="auto_loop_test",
+    )
+
+    app._normalize_status_after_turn(quest_id, turn_reason="user_message")
+    snapshot = app.quest_service.snapshot(quest_id)
+
+    assert snapshot["continuation_policy"] == "auto"
+    assert snapshot["continuation_reason"] == "autonomous_prepare_or_launch_long_run"
+
+
+def test_copilot_auto_continue_parks_without_external_progress(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+    quest = app.quest_service.create(
+        "copilot auto continue without external progress quest",
+        startup_contract={
+            "workspace_mode": "copilot",
+            "decision_policy": "user_gated",
+            "launch_mode": "custom",
+            "custom_profile": "freeform",
+        },
+    )
+    quest_id = quest["quest_id"]
+    quest_root = Path(quest["quest_root"])
+
+    app.quest_service.set_continuation_state(
+        quest_root,
+        policy="auto",
+        anchor="decision",
+        reason="copilot_auto_loop_test",
+    )
+
+    app._normalize_status_after_turn(quest_id, turn_reason="user_message")
+    snapshot = app.quest_service.snapshot(quest_id)
+
+    assert snapshot["continuation_policy"] == "wait_for_user_or_resume"
+    assert snapshot["continuation_reason"] == "copilot_mode"
+
+
+def test_auto_continue_switches_to_external_progress_monitoring_when_bash_runs_exist(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+    quest = app.quest_service.create("auto continue with bash progress quest")
+    quest_id = quest["quest_id"]
+    quest_root = Path(quest["quest_root"])
+
+    app.quest_service.set_continuation_state(
+        quest_root,
+        policy="auto",
+        anchor="experiment",
+        reason="external_progress_test",
+    )
+    context = McpContext(
+        home=temp_home,
+        quest_root=quest_root,
+        quest_id=quest_id,
+        run_id="run-external-progress",
+        active_anchor="experiment",
+        conversation_id=f"quest:{quest_id}",
+        agent_role="pi",
+        worker_id="worker-main",
+        worktree_root=None,
+        team_mode="single",
+    )
+    session = app.bash_exec_service.start_session(
+        context,
+        command="sleep 30",
+        mode="detach",
+    )
+    assert session["status"] == "running"
+
+    app._normalize_status_after_turn(quest_id, turn_reason="user_message")
+    snapshot = app.quest_service.snapshot(quest_id)
+
+    assert snapshot["continuation_policy"] == "when_external_progress"
+    assert snapshot["continuation_reason"] == "background_external_progress_active"
+    app.bash_exec_service.request_stop(quest_root, str(session["bash_id"]))
 
 
 def test_daemon_retries_failed_runner_attempt_and_continues_with_retry_context(temp_home: Path) -> None:

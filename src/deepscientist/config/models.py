@@ -38,6 +38,7 @@ def default_config(home: Path) -> dict:
         "ui": {
             "host": "0.0.0.0",
             "port": 20999,
+            "auth_enabled": False,
             "auto_open_browser": True,
             "default_mode": "web",
         },

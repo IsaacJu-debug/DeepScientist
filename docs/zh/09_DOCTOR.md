@@ -152,7 +152,7 @@ ds doctor
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-如果你在 Windows PowerShell：
+如果你在 Windows PowerShell（但日常使用 DeepScientist 仍然强烈建议优先使用 WSL2）：
 
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
@@ -236,4 +236,7 @@ git config --global user.email "you@example.com"
 ## 说明
 
 - `ds docker` 保留为兼容别名，但正式命令是 `ds doctor`。
-- 默认浏览器访问地址是 `http://127.0.0.1:20999`。
+- 默认情况下，浏览器访问地址保持普通本地形式，例如 `http://127.0.0.1:20999`。
+- 如果启用了本地浏览器密码模式，首页会先弹出密码框，再继续进入工作区。
+- 你可以回到启动终端查看当前密码，或者执行 `ds --status`。
+- 默认情况下不会出现密码弹窗；如果你想在某次启动中启用本地浏览器密码模式，可以使用 `ds --auth true`。

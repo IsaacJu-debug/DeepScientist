@@ -150,7 +150,7 @@ Normally `ds` will bootstrap a local `uv` automatically. If that bootstrap fails
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-On Windows PowerShell:
+On Windows PowerShell (still strongly recommend WSL2 for regular DeepScientist use):
 
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
@@ -232,4 +232,7 @@ Set it back to disabled in:
 ## Notes
 
 - `ds docker` is kept as a compatibility alias, but the official command is `ds doctor`.
-- The normal browser URL is `http://127.0.0.1:20999`.
+- The default browser URL stays in the plain local form, for example `http://127.0.0.1:20999`.
+- When local browser auth is enabled, DeepScientist shows a password modal before loading the workspace.
+- You can view the current password in the launch terminal or through `ds --status`.
+- By default the password modal is disabled; use `ds --auth true` when you want the local browser password gate for one launch.
