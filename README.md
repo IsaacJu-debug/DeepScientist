@@ -5,7 +5,7 @@
 
 
 <p align="center">
-  DeepScientist is a local-first autonomous AI research studio that keeps the whole research loop moving on your machine, from baseline reproduction to experiment loops to paper-ready outputs, with a 10-minute local setup.
+  Unlike common The AI Scientist-style or autoresearch-style systems, DeepScientist is a local-first autonomous AI research studio that keeps the whole research loop moving on your machine, from baseline reproduction and experiment loops to paper-ready outputs, with a 10-minute local setup. With the Findings Memory and Bayesian optimization process introduced in DeepScientist V1, together with the Research Map introduced in V1.5, it keeps turning each newly established result into a new starting point for the next round of optimization.
 </p>
 
 
@@ -47,8 +47,6 @@ If you are tired of paper overload, broken baselines, scattered experiment logs,
 ---
 
 https://github.com/user-attachments/assets/3c7abb44-2b25-4477-a011-10a3154d6d76
-
-DeepScientist is different from most research tools because it is built for long-horizon autonomous research rather than short-lived runs. It is the only AI Scientist system we know that is designed to keep running for as long as a month, not only continuing the current research loop, but also continuing to optimize from each newly established result as a new starting point. That behavior comes from the Bayesian optimization process and Findings Memory introduced in DeepScientist V1, together with the Research Map mechanism introduced in V1.5. “Deep” means it can explore broadly and persistently, not just execute one user-given idea, but automatically drive large-scale validation through thousands of experiments when the route requires it.
 
 ## Still Spending Your Time On Research Grunt Work?
 

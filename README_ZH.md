@@ -4,7 +4,7 @@
 </h1>
 
 <p align="center">
-  DeepScientist 是一个本地优先的自治 AI 科研工作室，它能在你的机器上持续推动完整科研闭环，从复现 Baseline、推进实验循环到整理论文级产出，10 分钟即可本地启动。
+  与常见的 The AI Scientist 系统或者 autoresearch 系统不同的是，DeepScientist 是一个本地优先的自治 AI 科研工作室，它能在你的机器上持续推动完整科研闭环，从复现 Baseline、多轮实验到论文级产出，10 分钟即可本地启动。依靠 DeepScientist V1 引入的 Findings Memory 与贝叶斯优化过程，以及 V1.5 引入的 Research Map 机制，它会在每一个新结果建立之后继续把它当作新的起点往前推进。
 </p>
 
 <p align="center">
@@ -45,10 +45,6 @@
 
 
 https://github.com/user-attachments/assets/16e3d346-7b27-41ef-bf3c-dc169aed3911
-
-DeepScientist 和大多数科研工具的不同，在于它是为长期自治科研而不是短期单次运行设计的。我们认为它是目前唯一一个以“可连续运行 1 个月”为目标来构建的 AI Scientist 系统。它不仅会持续推进当前研究流程，而且当一个新的结果被建立之后，还能够把这个结果当作新的起点继续优化。这个能力来自 DeepScientist V1 引入的贝叶斯优化过程与 Findings Memory 机制，以及 V1.5 引入的 Research Map 机制。这里的 “Deep” 并不只是把一个给定 idea 做完，而是意味着能够深入且广泛地探索，在需要的时候自动推进成百上千次实验验证。
-
-
 
 ## 还在把时间花在科研体力活上吗？
 
