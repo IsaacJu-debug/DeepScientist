@@ -47,6 +47,7 @@ Prepare these first:
 
 If you are still choosing a coding plan or subscription, these are practical starting points:
 
+- If you just want one simple starting recommendation, start with GPT-5.4 using `xhigh` reasoning effort, or Gemini 3 Pro using `gemini-3-pro-preview`.
 - ChatGPT pricing: https://openai.com/chatgpt/pricing/
 - ChatGPT Plus help: https://help.openai.com/en/articles/6950777-what-is-chatgpt-plus%3F.eps
 - MiniMax Coding Plan: https://platform.minimaxi.com/docs/guides/pricing-codingplan
@@ -203,6 +204,18 @@ ds --here
 ```
 
 This is equivalent to `ds --home "$PWD/DeepScientist"`.
+
+Important:  
+* if you start DeepScientist with `ds --here` or an explicit `--home <path>`, later management commands such as `ds --status` and `ds --stop` should use the same DeepScientist home  
+* using the same `DEEPSCIENTIST_HOME` or `DS_HOME` environment variable for those commands is also fine
+* otherwise, the CLI may fall back to the default `~/DeepScientist`, which can make a reachable daemon look like an unverified one  
+  
+For example, when using a non-default home, run:  
+
+```bash
+ds --status --home /path/to/DeepScientist  
+ds --stop --home /path/to/DeepScientist
+```
 
 If you want another port, run:
 
@@ -421,12 +434,24 @@ Check status:
 ds --status
 ```
 
+If you started DeepScientist with a non-default home, specify it explicitly:  
+
+```bash
+ds --status --home /path/to/DeepScientist
+```
+
 This shows whether the local runtime is up.
 
 Stop the daemon:
 
 ```bash
 ds --stop
+```
+
+If you started DeepScientist with a non-default home, specify it explicitly:  
+
+```bash
+ds --stop --home /path/to/DeepScientist
 ```
 
 This stops the local DeepScientist daemon.
