@@ -448,4 +448,8 @@ If this direction is interesting to you, please give the project a `Watch` and a
 [![Watch DeepScientist](https://img.shields.io/github/watchers/ResearAI/DeepScientist?style=for-the-badge&logo=github&label=Watch%20DeepScientist)](https://github.com/ResearAI/DeepScientist/watchers)
 [![Star DeepScientist](https://img.shields.io/github/stars/ResearAI/DeepScientist?style=for-the-badge&logo=github&label=Star%20DeepScientist)](https://github.com/ResearAI/DeepScientist/stargazers)
 
-This project is maintained by WestlakeNLP. If you run into problems, please ask on [DeepWiki](https://deepwiki.com/ResearAI/DeepScientist) first; if it still cannot be resolved, open an issue. WestlakeNLP is led by ACL Fellow Professor Yue Zhang. If you are interested in a long-term internship, PhD position, or research assistant opportunity, contact Professor Yue Zhang at `zhangyue@westlake.edu.cn`.
+---
+
+This project is maintained by WestlakeNLP. If you run into problems, please ask on [DeepWiki](https://deepwiki.com/ResearAI/DeepScientist) first; if it still cannot be resolved, open an issue.
+
+WestlakeNLP is led by ACL Fellow Professor Yue Zhang. If you are interested in a long-term internship, PhD position, or research assistant opportunity, contact Professor Yue Zhang at `zhangyue@westlake.edu.cn`.

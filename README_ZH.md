@@ -448,4 +448,8 @@ url={https://openreview.net/forum?id=cZFgsLq8Gs}
 [![Watch DeepScientist](https://img.shields.io/github/watchers/ResearAI/DeepScientist?style=for-the-badge&logo=github&label=Watch%20DeepScientist)](https://github.com/ResearAI/DeepScientist/watchers)
 [![Star DeepScientist](https://img.shields.io/github/stars/ResearAI/DeepScientist?style=for-the-badge&logo=github&label=Star%20DeepScientist)](https://github.com/ResearAI/DeepScientist/stargazers)
 
-本项目由 WestlakeNLP 负责维护。如有问题，建议优先在 [DeepWiki](https://deepwiki.com/ResearAI/DeepScientist) 询问；如果仍无法解决，再通过 issue 汇报。WestlakeNLP 由 ACL Fellow 张岳教授领导。有意申请长期实习、博士生、研究助理者，可联系张岳教授邮箱：`zhangyue@westlake.edu.cn`。
+---
+
+本项目由 WestlakeNLP 负责维护。如有问题，建议优先在 [DeepWiki](https://deepwiki.com/ResearAI/DeepScientist) 询问；如果仍无法解决，再通过 issue 汇报。
+
+WestlakeNLP 由 ACL Fellow 张岳教授领导。有意申请长期实习、博士生、研究助理者，可联系张岳教授邮箱：`zhangyue@westlake.edu.cn`。
