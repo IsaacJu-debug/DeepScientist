@@ -4101,7 +4101,7 @@ class QuestService:
                 reconciled_policy_updates["continuation_policy"] = "auto"
                 reconciled_policy_updates["continuation_reason"] = "autonomous_mode_reconciled"
                 reconciled_policy_updates["continuation_updated_at"] = utc_now()
-            elif workspace_mode == "copilot" and current_policy not in {"wait_for_user_or_resume", "none"}:
+            elif workspace_mode == "copilot" and current_policy == "auto":
                 reconciled_policy_updates["continuation_policy"] = "wait_for_user_or_resume"
                 reconciled_policy_updates["continuation_reason"] = "copilot_mode_reconciled"
                 reconciled_policy_updates["continuation_updated_at"] = utc_now()
