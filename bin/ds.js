@@ -4279,6 +4279,7 @@ async function performSelfUpdate(home, options = {}) {
     };
   }
 
+  const npmBinary = resolveNpmBinary();
   const installResult = runNpmInstallLatest(home, npmBinary);
   if (!installResult.ok) {
     const message = summarizeUpdateFailure(installResult);
