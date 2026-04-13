@@ -1,23 +1,257 @@
 # 15 Codex Provider Setup
 
-DeepScientist does not implement separate provider adapters for MiniMax, GLM, Volcengine Ark, or Alibaba Bailian.
+DeepScientist does not maintain a separate provider adapter layer for MiniMax, GLM, Volcengine Ark, Alibaba Bailian, or other Codex-compatible services.
 
-For Qwen on Alibaba Bailian, DeepScientist only supports the **Coding Plan** path. The generic Bailian or DashScope Qwen platform API is not supported here.
+It reuses the Codex CLI that already works on your machine.
 
-Instead, it reuses the same Codex CLI setup that already works in your terminal.
+The right mental model is:
 
-The recommended order is always:
-
-1. make Codex itself work first
-2. confirm `codex` or `codex --profile <name>` works in a terminal
+1. make `codex` work first
+2. confirm the same config works in a terminal
 3. run `ds doctor`
-4. run `ds` or `ds --codex-profile <name>`
+4. only then run `ds` or `ds --codex-profile <name>`
 
-## Three supported patterns
+If Codex itself is not working yet, fixing DeepScientist first is the wrong order.
+
+## What files matter
+
+Codex CLI reads its local state from `~/.codex/`.
+
+The most important files are:
+
+- `~/.codex/config.toml`
+  - your provider, model, profile, and feature configuration
+- `~/.codex/auth.json`
+  - created by `codex login` when the provider uses the normal OpenAI login flow
+- `~/.codex/history.jsonl`
+  - local session history; not required for setup
+
+Useful inspection commands:
+
+```bash
+ls -la ~/.codex
+sed -n '1,220p' ~/.codex/config.toml
+codex --version
+codex --help
+codex exec --help
+```
+
+## Recommended setup order
+
+Always follow this order:
+
+1. install Codex CLI and confirm the binary is the one you expect
+2. prepare `~/.codex/config.toml`
+3. validate `codex` or `codex --profile <name>` directly
+4. validate DeepScientist with `ds doctor`
+5. launch DeepScientist with the same Codex profile
+
+## Step 1: confirm the Codex binary
+
+Check which Codex is actually being used:
+
+```bash
+which codex
+codex --version
+```
+
+If you need a specific binary, keep its absolute path and pass it to DeepScientist with `--codex`.
+
+Example:
+
+```bash
+ds doctor --codex /absolute/path/to/codex --codex-profile glm
+ds --codex /absolute/path/to/codex --codex-profile glm
+```
+
+## Step 2: understand the two common Codex configuration shapes
+
+### A. OpenAI login shape
+
+Use this when Codex works through normal OpenAI authentication.
+
+Typical flow:
+
+```bash
+codex login
+codex
+```
+
+In this case, `~/.codex/auth.json` is usually present, and `config.toml` may stay minimal.
+
+Minimal example:
+
+```toml
+model = "gpt-5.4"
+model_reasoning_effort = "high"
+
+[projects."/absolute/path/to/your/project"]
+trust_level = "trusted"
+```
+
+### B. Explicit provider shape in `config.toml`
+
+Use this when you are pointing Codex at a non-default provider or gateway.
+
+A common pattern is:
+
+```toml
+model_provider = "myprovider"
+model = "gpt-5.4"
+model_reasoning_effort = "xhigh"
+
+[model_providers.myprovider]
+name = "My Provider"
+base_url = "https://example.com/codex"
+wire_api = "responses"
+experimental_bearer_token = "YOUR_TOKEN_HERE"
+requires_openai_auth = true
+```
+
+Another common pattern uses an environment variable instead of embedding a bearer token:
+
+```toml
+[model_providers.myprovider]
+name = "My Provider"
+base_url = "https://example.com/codex"
+wire_api = "chat"
+env_key = "MYPROVIDER_API_KEY"
+requires_openai_auth = false
+```
+
+Then export the key in the shell before starting Codex or DeepScientist:
+
+```bash
+export MYPROVIDER_API_KEY="..."
+```
+
+## Step 3: understand the most important `config.toml` fields
+
+These are the fields you usually need to touch.
+
+### Top-level fields
+
+- `model_provider`
+  - which provider block to use by default
+- `model`
+  - the model id to send by default
+- `model_reasoning_effort`
+  - for example `medium`, `high`, or `xhigh`
+- `service_tier`
+  - optional provider-specific runtime preference
+
+### Provider block fields
+
+Inside `[model_providers.<name>]`:
+
+- `name`
+  - human-readable label
+- `base_url`
+  - the exact provider endpoint Codex should call
+- `wire_api`
+  - usually `responses` or `chat`; use the provider's documented format
+- `env_key`
+  - name of the shell environment variable containing the API key
+- `experimental_bearer_token`
+  - fixed bearer token if your provider setup uses one directly
+- `requires_openai_auth`
+  - whether Codex should still expect the standard OpenAI auth shape
+- `request_max_retries`
+  - optional request retry count
+- `stream_max_retries`
+  - optional stream retry count
+- `stream_idle_timeout_ms`
+  - optional stream idle timeout
+
+### Profile fields
+
+Profiles live under `[profiles.<alias>]`.
+
+Example:
+
+```toml
+[profiles.glm]
+model = "GLM-4.7"
+model_provider = "glm"
+```
+
+Then use it with:
+
+```bash
+codex --profile glm
+```
+
+### Project trust
+
+Codex also cares about project trust.
+
+Example:
+
+```toml
+[projects."/ssdwork/deepscientist/DeepScientist"]
+trust_level = "trusted"
+```
+
+If a project is not trusted, Codex may ask again before running.
+
+## Step 4: a step-by-step profile workflow
+
+This is the safest general workflow.
+
+### 4.1 Edit `~/.codex/config.toml`
+
+Start from your existing file:
+
+```bash
+cp ~/.codex/config.toml ~/.codex/config.toml.bak
+${EDITOR:-vim} ~/.codex/config.toml
+```
+
+### 4.2 Add a provider block
+
+Example skeleton:
+
+```toml
+[model_providers.provider_name]
+name = "Provider Name"
+base_url = "https://provider.example/v1"
+wire_api = "chat"
+env_key = "PROVIDER_API_KEY"
+requires_openai_auth = false
+request_max_retries = 4
+stream_max_retries = 10
+stream_idle_timeout_ms = 300000
+```
+
+### 4.3 Add a profile
+
+```toml
+[profiles.provider_alias]
+model = "provider-model-id"
+model_provider = "provider_name"
+```
+
+### 4.4 Validate Codex directly
+
+Interactive check:
+
+```bash
+codex --profile provider_alias
+```
+
+Non-interactive smoke check:
+
+```bash
+codex exec --profile provider_alias "Reply with exactly OK."
+```
+
+If this fails, stop there and fix Codex first.
+
+## Step 5: map that setup into DeepScientist
+
+There are three supported DeepScientist usage patterns.
 
 ### 1. Default OpenAI login path
-
-Use this when your Codex CLI works through the standard OpenAI login flow.
 
 ```bash
 codex login
@@ -27,61 +261,57 @@ ds
 
 ### 2. One-off provider profile
 
-Use this when you already have a named Codex profile such as `m27`, `glm`, `ark`, or `bailian`.
-
 ```bash
-codex --profile m27
-ds doctor --codex-profile m27
-ds --codex-profile m27
+codex --profile glm
+codex exec --profile glm "Reply with exactly OK."
+ds doctor --codex-profile glm
+ds --codex-profile glm
 ```
 
-If you need one specific Codex binary for this run, use:
+### 3. Persistent runner config
 
-```bash
-ds doctor --codex /absolute/path/to/codex --codex-profile m27
-ds --codex /absolute/path/to/codex --codex-profile m27
-```
-
-This is the simplest path. You do not need to edit `runners.yaml` just to try one provider-backed session.
-
-### 3. Persistent provider profile
-
-Use this when you want DeepScientist to keep using the same profile by default.
+If you want DeepScientist to keep using the same Codex profile by default, set it in `runners.yaml`.
 
 ```yaml
 codex:
   enabled: true
   binary: codex
   config_dir: ~/.codex
-  profile: minimax
+  profile: glm
   model: inherit
-  model_reasoning_effort: xhigh
+  model_reasoning_effort: high
   approval_policy: on-request
   sandbox_mode: workspace-write
 ```
 
 Important:
 
-- keep `model: inherit` for provider-backed Codex profiles unless you are certain the provider accepts the explicit model id you plan to send
-- DeepScientist now launches Codex from an isolated runtime home under `.ds/codex-home`, but that runtime copy inherits your configured `~/.codex` auth, config, skills, agents, and prompts first
-- if the active provider uses `wire_api = "chat"`, DeepScientist now auto-checks that the selected Codex binary is exactly `0.57.0` during startup probe
+- `profile` should usually be your local Codex profile alias, such as `glm`, `ark`, `bailian`, `m25`, or `m27-local`
+- for provider-backed Codex profiles, prefer `model: inherit`
+- only hard-code `model:` in DeepScientist if you are sure the provider accepts that exact explicit model id
+- DeepScientist launches Codex from an isolated runtime home under `.ds/codex-home`, but copies your configured `~/.codex` auth, config, skills, agents, and prompts into that runtime copy first
 
-## Provider matrix
+## One-off overrides without editing `config.toml`
 
-| Provider | Official docs | Codex login needed | What DeepScientist should use |
-|---|---|---|---|
-| OpenAI | use the normal Codex setup | Yes | no profile; run `ds` |
-| MiniMax | [MiniMax Codex CLI](https://platform.minimaxi.com/docs/coding-plan/codex-cli) | No | your Codex profile, for example `ds --codex-profile m27` |
-| GLM | [GLM Coding Plan: Other Tools](https://docs.bigmodel.cn/cn/coding-plan/tool/others) | No | a Codex profile that targets the GLM coding endpoint |
-| Volcengine Ark | [Ark Coding Plan Overview](https://www.volcengine.com/docs/82379/1925114?lang=zh) | No | a Codex profile that targets the Ark coding endpoint |
-| Alibaba Bailian | [Bailian Coding Plan: Other Tools](https://help.aliyun.com/zh/model-studio/other-tools-coding-plan) | No | a Codex profile that targets the Bailian Coding Plan endpoint; do not use the generic Bailian or DashScope Qwen API |
+Codex itself supports `-c key=value` overrides.
+
+Examples:
+
+```bash
+codex -c model="gpt-5.4"
+codex -c model_provider="yunyi" -c model="gpt-5.4"
+codex exec -c model_reasoning_effort="high" "Reply with exactly OK."
+```
+
+This is useful for quick checks, but for repeatable DeepScientist runs, profiles in `~/.codex/config.toml` are cleaner.
 
 ## OpenAI
 
 ### What to prepare
 
-- a normal Codex CLI install
-- a successful `codex login` or `codex` interactive first-run setup
+- a working Codex install
+- successful `codex login`
+- a direct `codex` or `codex exec "Reply with exactly OK."` check
 
 ### DeepScientist commands
 
@@ -103,77 +333,37 @@ codex:
 
 ## MiniMax
 
-MiniMax is the clearest profile-based case. Its official Codex CLI guide configures a custom Codex provider and sets `requires_openai_auth = false`.
-
 Official doc:
 
 - <https://platform.minimaxi.com/docs/coding-plan/codex-cli>
 
-### Verified compatibility note
+MiniMax is the clearest profile-based case.
 
-Checked against MiniMax's current Codex CLI doc and local compatibility validation on 2026-04-04:
+### Important compatibility note
 
-- MiniMax's Codex CLI page currently recommends `@openai/codex@0.57.0`
-- the Coding Plan endpoint to use is `https://api.minimaxi.com/v1`
-- MiniMax's official page uses `m21` as the profile name, but that profile name is only a local alias; this repo uses `m27` consistently in examples
-- the `codex-MiniMax-*` model names shown on MiniMax's page did not pass reliably through Codex CLI in local testing with the provided key
-- the locally verified DeepScientist working paths were `MiniMax-M2.7` + `m27` + Codex CLI `0.57.0` and `MiniMax-M2.5` + `m25` + Codex CLI `0.57.0`
-- the current `@openai/codex` latest release still does not line up cleanly with MiniMax's current guide
+MiniMax's official Coding Plan model `MiniMax-M2.7` is **not currently working reliably with Codex CLI** on the supported Codex path used by this repo.
 
-If you want the most reproducible DeepScientist + MiniMax path today, use Codex CLI `0.57.0`.
+For the official Codex-compatible path, use:
 
-### What to prepare
+- `MiniMax-M2.5`
+- profile alias such as `m25`
+- Codex CLI `0.57.0` if you want the current highest-compatibility MiniMax Coding Plan path
 
-- Codex CLI `0.57.0`
-- a MiniMax `Coding Plan Key`
-- `MINIMAX_API_KEY` available in the shell that starts Codex and DeepScientist
-- for plain terminal `codex --profile <name>` checks, the current shell cleared of `OPENAI_API_KEY` and `OPENAI_BASE_URL`
-- a working Codex profile in `~/.codex/config.toml`
+If you specifically want `MiniMax-M2.7`, the recommended route is:
 
-### Install Codex CLI `0.57.0`
+- do **not** treat it as the default official Codex Coding Plan path
+- instead expose your own local OpenAI-compatible `vllm` endpoint for M2.7
+- then point Codex at that local endpoint through a custom provider block in `~/.codex/config.toml`
 
-The simplest path is to pin the global Codex install:
+### Recommended official Coding Plan path
 
-```bash
-npm install -g @openai/codex@0.57.0
-codex --version
-```
+Use the official MiniMax Coding Plan endpoint:
 
-Expected output:
+- Base URL: `https://api.minimaxi.com/v1`
+- API key env: `MINIMAX_API_KEY`
+- Model: `MiniMax-M2.5`
 
-```text
-codex-cli 0.57.0
-```
-
-If you want to keep another Codex version elsewhere, create a small wrapper script and point `runners.codex.binary` at that absolute path.
-
-When DeepScientist detects a MiniMax profile at startup and the active Codex CLI is not `0.57.0`, it now prompts to reinstall `@openai/codex@0.57.0` automatically in interactive terminal launches.
-
-### Codex-side setup
-
-Use `https://api.minimaxi.com/v1`, not `https://api.minimax.io/v1`.
-
-MiniMax's doc requires clearing the OpenAI environment variables first:
-
-```bash
-unset OPENAI_API_KEY
-unset OPENAI_BASE_URL
-export MINIMAX_API_KEY="..."
-```
-
-For plain terminal validation, keep doing that exactly as shown above.
-For the DeepScientist path, when the selected provider sets `requires_openai_auth = false`, DeepScientist now strips `OPENAI_API_KEY` and `OPENAI_BASE_URL` automatically during the startup probe and real runner execution.
-
-MiniMax's official page uses `m21` as the example profile name. Since the profile name is only a local alias, this repo rewrites that example to `m27`.
-
-The important difference is the model name:
-
-- MiniMax's page currently shows `codex-MiniMax-M2.5`
-- in local testing, direct MiniMax API calls worked with `MiniMax-M2.7` and `MiniMax-M2.5`
-- the reproducible DeepScientist paths were `MiniMax-M2.7` on profile `m27` and `MiniMax-M2.5` on profile `m25`
-- for the `m25` path, use `MiniMax-M2.5`, not `codex-MiniMax-M2.5`
-
-So the config below is the currently recommended DeepScientist configuration:
+Recommended config shape:
 
 ```toml
 [model_providers.minimax]
@@ -186,118 +376,99 @@ request_max_retries = 4
 stream_max_retries = 10
 stream_idle_timeout_ms = 300000
 
-[profiles.m27]
-model = "MiniMax-M2.7"
-model_provider = "minimax"
-```
-
-If you want the same DeepScientist path on `m25`, keep the provider block unchanged and use:
-
-```toml
 [profiles.m25]
 model = "MiniMax-M2.5"
 model_provider = "minimax"
 ```
 
-What DeepScientist supports now:
+Validation order:
 
-- if you use this profile-only MiniMax config with Codex CLI `0.57.0`, DeepScientist automatically promotes the selected profile's `model_provider` and `model` to the top level inside its probe/runtime copy of `config.toml`
-- DeepScientist forces provider-backed MiniMax runs to use `model: inherit`, so it does not accidentally override the profile with a hard-coded OpenAI model
-- when `requires_openai_auth = false`, DeepScientist strips conflicting `OPENAI_API_KEY` and `OPENAI_BASE_URL` values from the probe/runtime environment
-- for chat-wire provider sessions such as MiniMax on Codex CLI `0.57.0`, DeepScientist now injects a compatibility guard that tells Codex to serialize MCP tool calls one at a time instead of bundling multiple tool calls into the same response
-- this means DeepScientist can start even when plain terminal `codex --profile m27` still fails on that exact profile-only shape
+```bash
+unset OPENAI_API_KEY
+unset OPENAI_BASE_URL
+export MINIMAX_API_KEY="..."
+codex --version
+codex --profile m25
+codex exec --profile m25 "Reply with exactly OK."
+ds doctor --codex-profile m25
+ds --codex-profile m25
+```
 
-If you want plain terminal `codex --profile <name>` to work too, use the explicit top-level compatibility form instead:
+### If you want MiniMax-M2.7 anyway
+
+Recommended route: run M2.7 behind your own local OpenAI-compatible `vllm` service.
+
+Example shape:
 
 ```toml
-model = "MiniMax-M2.7"
-model_provider = "minimax"
-approval_policy = "never"
-sandbox_mode = "workspace-write"
-
-[model_providers.minimax]
-name = "MiniMax Chat Completions API"
-base_url = "https://api.minimaxi.com/v1"
-env_key = "MINIMAX_API_KEY"
+[model_providers.minimax_local_vllm]
+name = "MiniMax M2.7 via local vLLM"
+base_url = "http://127.0.0.1:8000/v1"
 wire_api = "chat"
 requires_openai_auth = false
-request_max_retries = 4
-stream_max_retries = 10
-stream_idle_timeout_ms = 300000
+env_key = "OPENAI_API_KEY"
 
-[profiles.m27]
+[profiles.m27-local]
 model = "MiniMax-M2.7"
-model_provider = "minimax"
+model_provider = "minimax_local_vllm"
 ```
 
-Then:
+Then validate it exactly the same way:
 
 ```bash
-codex --profile m27
-```
-
-### DeepScientist commands
-
-```bash
-ds doctor --codex-profile m27
-ds --codex-profile m27
+export OPENAI_API_KEY="dummy-or-local-token-if-needed"
+codex --profile m27-local
+codex exec --profile m27-local "Reply with exactly OK."
+ds doctor --codex-profile m27-local
+ds --codex-profile m27-local
 ```
 
 ### Persistent runner config
 
+Official Coding Plan path:
+
 ```yaml
 codex:
   enabled: true
-  binary: /tmp/codex057-wrapper
+  binary: codex
   config_dir: ~/.codex
-  profile: m27
+  profile: m25
   model: inherit
   model_reasoning_effort: high
 ```
 
-If you already pinned your global `codex` binary to `0.57.0`, you can set `binary: codex` instead. The absolute wrapper path here is only to make the version choice explicit.
+Local vLLM M2.7 path:
 
-If you do not want to persist that path in `runners.yaml`, you can keep `binary: codex` there and launch ad hoc with:
-
-```bash
-ds --codex /absolute/path/to/codex --codex-profile m27
+```yaml
+codex:
+  enabled: true
+  binary: codex
+  config_dir: ~/.codex
+  profile: m27-local
+  model: inherit
+  model_reasoning_effort: high
 ```
 
-DeepScientist now does two MiniMax-specific compatibility steps for the `0.57.0` path:
-
-- it downgrades `xhigh` to `high` automatically when the Codex CLI does not support `xhigh`
-- it auto-adapts MiniMax's profile-only `model_provider` / `model` shape inside the temporary DeepScientist Codex home when needed
-- it removes conflicting `OPENAI_*` auth variables automatically when the provider explicitly says `requires_openai_auth = false`
-
 ## GLM
-
-GLM documents the Coding Plan as an OpenAI-compatible coding endpoint rather than a dedicated Codex login flow.
 
 Official docs:
 
 - <https://docs.bigmodel.cn/cn/coding-plan/tool/others>
 - <https://docs.bigmodel.cn/cn/coding-plan/faq>
 
-### Official provider values
+Official values from current public guidance:
 
 - Base URL: `https://open.bigmodel.cn/api/coding/paas/v4`
-- API key: your GLM Coding Plan key
-- Model: `GLM-4.7` for the documented path, or `GLM-5` where supported
+- Model: `GLM-4.7` or another currently documented Coding Plan model
 
-### Recommended Codex adaptation
+Recommended workflow:
 
-GLM does not currently publish a separate Codex CLI page in the same style as MiniMax. The practical DeepScientist path is:
-
-1. create a Codex profile in `~/.codex/config.toml` that points to the GLM coding endpoint above
-2. make sure `codex --profile glm` works in a terminal first
-3. run DeepScientist with the same profile
-
-### DeepScientist commands
-
-```bash
-ds doctor --codex-profile glm
-ds --codex-profile glm
-```
+1. add a GLM provider block in `~/.codex/config.toml`
+2. add a profile such as `[profiles.glm]`
+3. run `codex --profile glm`
+4. run `codex exec --profile glm "Reply with exactly OK."`
+5. run `ds doctor --codex-profile glm`
+6. run `ds --codex-profile glm`
 
 ### Persistent runner config
 
@@ -312,29 +483,20 @@ codex:
 
 ## Volcengine Ark
 
-Volcengine Ark explicitly lists Codex CLI as a supported coding tool.
-
 Official doc:
 
 - <https://www.volcengine.com/docs/82379/1925114?lang=zh>
 
-### Official provider values
+Official values from current public guidance:
 
-- OpenAI-compatible Base URL: `https://ark.cn-beijing.volces.com/api/coding/v3`
-- Supported coding models: `doubao-seed-code-preview-latest`, `ark-code-latest`
-- Use the Coding Plan key and the exact Coding Plan endpoint
+- Base URL: `https://ark.cn-beijing.volces.com/api/coding/v3`
+- Models: `doubao-seed-code-preview-latest`, `ark-code-latest`
 
-### Recommended Codex adaptation
-
-Create a Codex profile that targets the Ark coding endpoint and test it directly first:
+Recommended workflow:
 
 ```bash
 codex --profile ark
-```
-
-Then start DeepScientist with the same profile:
-
-```bash
+codex exec --profile ark "Reply with exactly OK."
 ds doctor --codex-profile ark
 ds --codex-profile ark
 ```
@@ -352,35 +514,26 @@ codex:
 
 ## Alibaba Bailian
 
-Bailian documents Coding Plan as an OpenAI-compatible coding endpoint. It requires the Coding Plan-specific key and endpoint, not the generic platform endpoint.
-
-For Qwen specifically:
-
-- supported: Qwen through the Bailian **Coding Plan** endpoint
-- not supported: the generic Bailian or DashScope Qwen platform API
-
 Official docs:
 
 - <https://help.aliyun.com/zh/model-studio/other-tools-coding-plan>
 - <https://help.aliyun.com/zh/model-studio/coding-plan-faq>
 
-### Official provider values
+Important:
 
-- OpenAI-compatible Base URL: `https://coding.dashscope.aliyuncs.com/v1`
-- API key: Coding Plan-specific key, typically `sk-sp-...`
-- Model: choose a Coding Plan-supported model from the current Bailian overview
+- supported: Qwen through the Bailian **Coding Plan** endpoint
+- not supported here: the generic Bailian / DashScope Qwen platform API
 
-### Recommended Codex adaptation
+Official values from current public guidance:
 
-Create a Codex profile that points to the Bailian Coding Plan endpoint and test it directly first:
+- Base URL: `https://coding.dashscope.aliyuncs.com/v1`
+- key shape: Coding Plan-specific key, usually `sk-sp-...`
+
+Recommended workflow:
 
 ```bash
 codex --profile bailian
-```
-
-Then start DeepScientist with the same profile:
-
-```bash
+codex exec --profile bailian "Reply with exactly OK."
 ds doctor --codex-profile bailian
 ds --codex-profile bailian
 ```
@@ -398,11 +551,16 @@ codex:
 
 ## Troubleshooting checklist
 
-If a provider-backed profile still fails in DeepScientist:
+If a provider-backed profile still fails:
 
-1. run `codex --profile <name>` manually first
-2. confirm the provider API key is present in the same shell
-3. confirm the provider-specific Base URL is the Coding Plan endpoint, not the generic API endpoint
-4. keep DeepScientist runner `model: inherit` unless you need an explicit override
-5. run `ds doctor --codex-profile <name>`
-6. only after that run `ds --codex-profile <name>`
+1. check `which codex` and `codex --version`
+2. inspect `~/.codex/config.toml`
+3. verify the provider block exists and the profile points to it
+4. verify the API key or bearer token is actually available
+5. verify the Base URL is the Coding Plan or Codex-compatible endpoint, not a generic platform endpoint
+6. run `codex --profile <name>` first
+7. run `codex exec --profile <name> "Reply with exactly OK."`
+8. run `ds doctor --codex-profile <name>`
+9. only then run `ds --codex-profile <name>`
+
+If `codex --profile <name>` fails but you believe the provider config is correct, fix Codex first. DeepScientist should not be the first place you debug provider auth.
