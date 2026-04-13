@@ -2,6 +2,7 @@
 
 Use this before substantial code edits or the real main run.
 Treat it as the implementation-and-execution plan for the selected idea, not just a metadata form.
+For lightweight runs, a one-screen plan is enough if it preserves the route, comparability boundary, command path, outputs, and fallback.
 
 ## 1. Map Link
 
@@ -67,15 +68,6 @@ Map the idea into concrete code changes.
 - log / artifact locations:
 - safe efficiency levers to use first:
 - how existing tooling will be used efficiently:
-
-Monitoring and sleep plan:
-
-- wait cadence:
-  - `60s`
-  - `120s`
-  - `300s`
-  - `600s`
-  - `1800s`
 - health signals that justify continuing to monitor:
 - conditions that trigger kill / relaunch:
 

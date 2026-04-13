@@ -1,6 +1,7 @@
 # Main Experiment Checklist Template
 
 Update this while planning, modifying code, running pilots, monitoring the full run, and validating the result.
+For a lightweight run, keep only the core planning, validation, and closeout items active.
 
 ## Identity
 
@@ -54,8 +55,7 @@ Update this while planning, modifying code, running pilots, monitoring the full 
 ## Main Run
 
 - [ ] real run launched
-- [ ] monitoring cadence started
-- [ ] health signals confirmed
+- [ ] health signals confirmed when the run is long enough to need monitoring
 - [ ] major runtime deviations reflected in `PLAN.md`
 
 ## Validation

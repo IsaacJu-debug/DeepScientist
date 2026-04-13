@@ -7,6 +7,7 @@ skill_role: companion
 # Intake Audit
 
 Use this skill when the quest already has meaningful state and the first job is to normalize that state instead of restarting the canonical research loop from zero.
+The goal is to recover one trustworthy starting state from messy existing assets, not to re-audit everything forever.
 
 ## Interaction discipline
 
@@ -283,3 +284,5 @@ When the audit concerns a specific existing line, include identifiers when known
 - the untrusted gaps are explicit
 - the next anchor is explicit
 - the system can continue without pretending the quest started from zero
+
+A good intake pass tells the system exactly what state is trusted, what is not, and what runs next.

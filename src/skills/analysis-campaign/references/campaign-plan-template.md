@@ -2,6 +2,7 @@
 
 Use this for the campaign-level plan.
 Treat it as the durable version of the charter, not a separate optional memo.
+For `analysis-lite`, a shorter charter is enough if the question, first slice, expected output, and next route are already clear.
 
 ## 1. Map Link
 
@@ -67,15 +68,6 @@ Treat it as the durable version of the charter, not a separate optional memo.
 - smoke-test policy:
 - main run policy:
 - expected outputs:
-
-Monitoring and sleep plan:
-
-- wait cadence:
-  - `60s`
-  - `120s`
-  - `300s`
-  - `600s`
-  - `1800s`
 - health signals that justify continued monitoring:
 - conditions that trigger slice redesign, kill, or campaign revision:
 

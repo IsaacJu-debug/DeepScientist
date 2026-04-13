@@ -7,6 +7,7 @@ skill_role: stage
 # Experiment
 
 Use this skill for the main evidence-producing runs of the quest.
+The goal is to turn one selected route into one trustworthy measured result with the smallest valid amount of execution.
 
 ## Interaction discipline
 
@@ -15,42 +16,27 @@ Use this skill for the main evidence-producing runs of the quest.
 - Keep ordinary subtask completions concise. When a main experiment actually finishes or reaches a stage-significant checkpoint, upgrade to a richer `artifact.interact(kind='milestone', reply_mode='threaded', ...)` report rather than another short progress line.
 - That richer experiment-stage milestone report should normally cover: what run finished, the headline result versus baseline or expectation, the main caveat, and the exact recommended next action.
 - That richer milestone report is still normally non-blocking. If the next route is already justified locally, continue automatically after reporting rather than idling for acknowledgment.
-- If the active communication surface is QQ and QQ milestone media is enabled in config, a completed main experiment may attach one summary PNG to that richer milestone update.
+- If the active communication surface is QQ and QQ milestone media is enabled in config, a completed main experiment may attach one summary PNG to that richer milestone update, but do not auto-send every training curve, per-step plot, or intermediate image.
 - That PNG should be a connector-facing report chart, not a raw debug plot and not a draft paper figure.
-- Do not auto-send every training curve, per-step plot, or intermediate slice image.
 - Preferred connector-chart palettes are Morandi-like and restrained:
-  - `sage-clay`: `#E7E1D6`, `#B7A99A`, `#7F8F84` for the default QQ summary look
-  - `mist-stone`: `#F3EEE8`, `#D8D1C7`, `#8A9199` for conservative summaries
-  - `dust-rose`: `#F2E9E6`, `#D8C3BC`, `#B88C8C` for secondary comparisons only
+  - `sage-clay`: `#E7E1D6`, `#B7A99A`, `#7F8F84`
+  - `mist-stone`: `#F3EEE8`, `#D8D1C7`, `#8A9199`
+  - `dust-rose`: `#F2E9E6`, `#D8C3BC`, `#B88C8C`
 - Connector-facing chart requirements:
   - white or near-white background
-  - low saturation, no neon colors
-  - one primary accent plus one neutral comparison color whenever possible
-  - simple legend, light grid, readable labels, and no dashboard clutter
+  - low saturation, simple legend, readable labels, and no dashboard clutter
   - summarize only the evidence needed for the milestone
-- Default chart choice:
-  - line chart for training / budget / step trends
-  - bar chart for a small number of categorical end-point comparisons
-  - point-range chart when uncertainty or seed spread matters
-- If the figure encodes ordered magnitude, use a sequential muted palette; if it encodes signed delta around a reference, use a diverging muted palette with a neutral midpoint.
-- Avoid rainbow / jet-like colormaps, 3D effects, and over-annotated dashboards.
-- If the chart may later be reused in the paper, export a vector copy (`pdf` or `svg`) alongside the connector `png`.
 - If the figure matters beyond transient debugging, open `figure-polish/SKILL.md` and follow its render-inspect-revise workflow before treating the image as final.
 - If plotting in Python, reuse the fixed Morandi plotting starter from the system prompt rather than inventing a new bright style for each run.
 - If the runtime starts an auto-continue turn with no new user message, continue from the current run state, logs, artifacts, and active requirements instead of replaying the previous user turn.
 
-## Three-layer todo contract
+## Planning surfaces
 
 - keep quest-root `plan.md` as the quest-level research map and loop tracker
-- keep workspace `PLAN.md` as the active experiment-node contract
-- keep workspace `CHECKLIST.md` as the active execution frontier with one real in-progress item and a short `Next` list
+- use workspace `PLAN.md` as the active experiment-node contract when the run is non-trivial, code-touching, or meant to become a durable main result
+- use workspace `CHECKLIST.md` as the active execution frontier with one real in-progress item and a short `Next` list
 - if the checklist stops changing across repeated passes, revise the node contract or route instead of nesting more execution subtasks
-
-## Research-map role
-
-- `experiment` is the evidence-producing node inside the current loop, not the whole loop itself
 - after each measured result, update quest-root `plan.md` with the actual next edge: analysis, write, decision, or a new loop entry
-- if a result becomes the new incumbent and the quest still has headroom, create the next loop entry in quest-root `plan.md` instead of treating writing as automatic termination
 - Progress message templates are references only. Adapt to the actual context and vary wording so messages feel human, respectful, and non-robotic.
 - If a threaded user reply arrives, interpret it relative to the latest experiment progress update before assuming the task changed completely.
 - Hard execution rule: every terminal command in this stage must go through `bash_exec`; do not use any other terminal path for smoke tests, real runs, Git, Python, package-manager, or file-inspection commands.
@@ -95,12 +81,14 @@ After a measured result, the default next move is frontier review and optimize-s
 Treat this as the short run-order summary. The detailed run contract, execution rules, and recording rules remain in `Workflow`.
 
 1. Restate the selected idea in `1-2` sentences and confirm the baseline comparison contract.
-2. Before substantial code edits or the real main run, create `PLAN.md` and `CHECKLIST.md`.
-3. Materialize or confirm a dedicated child `run/*` branch/worktree for this main experiment line; one durable main experiment should map to one run branch and one Canvas node.
-4. Use `PLAN.md` to lock the concrete run path, and use `CHECKLIST.md` as the living control surface while planning, implementing, pilot testing, running, and validating.
-5. Run a bounded smoke test or pilot before the real long run, then launch the real run with durable logging and monitor it through `bash_exec`.
-6. Once the route is concrete, prefer one clean implementation pass, one bounded smoke or pilot run, and then one normal main run; retry only after a concrete failure, invalidity, or genuinely new evidence justifies another attempt.
-7. Revise the plan if implementation, comparability, runtime, or route assumptions change materially, and close each real main-run milestone with a concise `1-2` sentence summary that says what was tested, whether performance improved / worsened / stayed mixed, and the exact next action.
+2. Split the work mentally into either a lightweight run or a durable main run.
+3. Before substantial code edits or a durable main run, create `PLAN.md` and `CHECKLIST.md`; for smaller validated follow-up runs, update the existing control surface instead of rebuilding a heavy plan package.
+4. Materialize or confirm a dedicated child `run/*` branch/worktree only when this run is meant to become a durable main-experiment node.
+5. Use `PLAN.md` to lock the concrete run path only when the route is still non-trivial, and use `CHECKLIST.md` as the living control surface while planning, implementing, testing, running, and validating.
+6. Use a bounded smoke test or pilot only when the command path, output schema, or environment viability is still unverified; otherwise launch the real run directly with durable logging and monitor it through `bash_exec`.
+7. Treat experiment smoke/pilot work as a `0-2` budget: `0` when direct real execution is already the cheapest discriminative check, `1` for one unresolved execution risk, and `2` only after a real code, command, environment, or evaluator change.
+8. Once the route is concrete, prefer one clean implementation pass and one real run; retries should happen only after a concrete failure, invalidity, or genuinely new evidence justifies another attempt.
+9. Revise the plan if implementation, comparability, runtime, or route assumptions change materially, and close each real main-run milestone with a concise `1-2` sentence summary that says what was tested, whether performance improved / worsened / stayed mixed, and the exact next action.
 
 ## Non-negotiable rules
 
@@ -156,18 +144,30 @@ Before a main run starts, confirm:
 
 If any of these are materially unknown, stop and resolve them through `decision`.
 
+Two execution tiers are acceptable:
+
+- `lightweight run`
+  - minimal code touch
+  - already-trusted command path
+  - no major branch or environment change
+  - one compact control-surface update plus durable result recording is usually enough
+- `durable main run`
+  - substantial code changes, new evaluator wiring, long runtime, or paper-facing claim-carrying evidence
+  - use the fuller `PLAN.md` / `CHECKLIST.md` contract and dedicated `run/*` surface
+
 ## Required plan and checklist
 
-Before substantial implementation work or a real main run, create a quest-visible `PLAN.md` and `CHECKLIST.md`.
+Before substantial implementation work or a durable main run, create a quest-visible `PLAN.md` and `CHECKLIST.md`.
 
 - Use `references/main-experiment-plan-template.md` as the canonical structure for `PLAN.md`.
 - Use `references/main-experiment-checklist-template.md` as the canonical structure for `CHECKLIST.md`.
 - keep quest-root `plan.md` synced with the current experiment map node, incumbent context, and next-loop transitions
-- `PLAN.md` should lead with the selected idea summarized in `1-2` sentences, put the user's explicit requirements and non-negotiable constraints first, and then make the run contract concrete: baseline and comparability rules, safe efficiency levers, code touchpoints, minimal code-change map, smoke / pilot path, full-run path, fallback options, monitoring and sleep rules, expected outputs, and a revision log.
-- `CHECKLIST.md` is the living execution list; update it during planning, implementation, smoke testing, main execution, validation, and every material route change.
+- `PLAN.md` should lead with the selected idea summarized in `1-2` sentences, put the user's explicit requirements and non-negotiable constraints first, and then make the run contract concrete: baseline and comparability rules, safe efficiency levers, code touchpoints, minimal code-change map, smoke / pilot path, full-run path, fallback options, expected outputs, and a revision log.
+- `CHECKLIST.md` is the living execution list; update it during planning, implementation, testing, main execution, validation, and every material route change.
 - If the code path, comparability contract, runtime strategy, or execution route changes materially, revise `PLAN.md` before spending more code or compute.
-- The later `RUN.md`, `summary.md`, and artifact payloads remain required outputs, but `PLAN.md` and `CHECKLIST.md` are the canonical planning-and-control surface before and during execution.
-- Once `PLAN.md` makes the implementation route concrete, do not keep reshaping code and commands speculatively. The normal default is one bounded smoke or pilot run and then one real run, with retries only after a documented failure, invalidity, or new evidence that changes the expected outcome.
+- For a lightweight run, a compact control-surface update is enough if the route, outputs, and next decision remain obvious.
+- The later `RUN.md`, `summary.md`, and artifact payloads remain required outputs for durable main runs, but `PLAN.md` and `CHECKLIST.md` are the canonical planning-and-control surface before and during execution.
+- Once `PLAN.md` makes the implementation route concrete, do not keep reshaping code and commands speculatively. The normal default is one real run, with a bounded smoke or pilot only when the path is still unverified, and retries only after a documented failure, invalidity, or new evidence that changes the expected outcome.
 
 ## Working-boundary rules
 
@@ -207,12 +207,8 @@ Do not claim run success without durable outputs.
 A meaningful experiment pass should leave behind:
 
 - a run directory under `artifacts/experiment/<run_id>/` or the quest-equivalent canonical location
-- `artifact_manifest.json`
-- `run_manifest.json`
-- `metrics.json`
-- `metrics.md`
-- `summary.md`
-- `runlog.summary.md`
+- `artifact_manifest.json`, `run_manifest.json`, `metrics.json`, and `summary.md`
+- `metrics.md` and `runlog.summary.md` for durable main runs
 - durable command, config, and log pointers
 - exported shell log, typically `bash.log`
 - a run artifact with explicit deltas versus baseline
@@ -221,10 +217,7 @@ A meaningful experiment pass should leave behind:
 Recommended additional files:
 
 - `claim_validation.md`
-- environment snapshot files such as:
-  - Python version
-  - package freeze
-  - GPU info when applicable
+- environment snapshot files such as Python version, package freeze, and GPU info when applicable
 - a live execution note or rolling run log when the experiment spans multiple implementation or execution steps
 
 `run_manifest.json` should capture at least:
@@ -286,12 +279,7 @@ Before coding, be able to explain:
 - what result would force a downgrade, retry, or route change
 - what confounder would make the run non-comparable even if it finishes successfully
 
-If multiple candidate experiment packages exist, prefer the one with the best balance of:
-
-- technical feasibility
-- research importance
-- methodological rigor
-
+If multiple candidate experiment packages exist, prefer the one with the best balance of technical feasibility, research importance, and methodological rigor.
 Do not choose a package only because it sounds ambitious.
 
 For paper-facing lines, default to this evidence ladder:
@@ -386,6 +374,7 @@ Retry-delta discipline:
 - if broader recovery is unavoidable, record exactly which layer changed: data, preprocessing, model, objective, optimization, evaluation, or environment
 - before each retry, state the expected effect and the fastest falsification signal
 - if the retry produced no interpretable delta, do not treat it as meaningful evidence about the underlying research hypothesis
+- if the retry does not change the hypothesis, code path, command path, or evidence surface, stop rerunning and route through `decision`
 
 ### 5. Execute the run
 
@@ -407,7 +396,7 @@ You may do a quick sanity run first, but if the stage goal is a real experiment 
 
 Pilot-before-scale rule:
 
-- start with a bounded pilot when the modification is non-trivial
+- start with a bounded pilot only when the modification is non-trivial and that pilot resolves a real execution uncertainty
 - use the pilot to catch implementation mistakes early
 - record pilot outcomes explicitly
 - do not mistake pilot success for final evidence
@@ -435,8 +424,10 @@ Last-known-good rule:
 
 For commands that may run longer than a few minutes:
 
-- before the real long run, execute a bounded smoke test or pilot that validates command paths, outputs, and basic metrics
-- once the smoke test passes, launch the real run with `bash_exec(mode='detach', ...)` and normally leave `timeout_seconds` unset for that long run
+- if command paths, outputs, or basic metrics are still unverified, execute one bounded smoke test or pilot first
+- keep smoke/pilot budget at `0-2` for the current experiment pass
+- allow a second smoke/pilot only after a real code, command, environment, or evaluator change
+- once the path is verified, launch the real run with `bash_exec(mode='detach', ...)` and normally leave `timeout_seconds` unset for that long run
 - monitor through durable logs rather than only live terminal output
 - `bash_exec(mode='read', id=...)` returns the full rendered log when it is 2000 lines or fewer; for longer logs it returns the first 500 lines plus the last 1500 lines and a hint to inspect omitted sections with `start` and `tail`
 - if the middle of a long saved log matters, inspect that omitted region with `bash_exec(mode='read', id=..., start=..., tail=...)`
@@ -585,7 +576,8 @@ Recommended per-run documentation fields:
 6. experimental analysis
 7. experimental conclusions
 
-These seven fields should be progressively filled as the run advances, not only at final packaging time.
+For durable main runs, these seven fields should be progressively filled as the run advances, not only at final packaging time.
+For lightweight runs, a shorter summary is acceptable if the route remains obvious and the result is still durably recorded.
 
 `RUN.md` should make it easy for later stages to answer:
 
@@ -594,16 +586,6 @@ These seven fields should be progressively filled as the run advances, not only 
 - what are the main results?
 - why did it work or fail?
 - what should happen next?
-
-When the run is analysis-heavy or meant to fill a writing evidence gap, prefer a structured summary with:
-
-1. research question
-2. research type
-3. objective and success criteria
-4. setup
-5. results
-6. analysis
-7. conclusion
 
 Recording rules:
 
@@ -660,156 +642,40 @@ Stage-start requirement:
 
 - begin every experiment pass with `memory.list_recent(scope='quest', limit=5)`
 - then run at least one experiment-relevant `memory.search(...)` before a new run, retry, or material execution change
+- before reopening a previously tested command path, pilot, or environment fix, search memory for the last trusted result or explicit non-repeat rule
 - if several idea or experiment lines exist, narrow retrieval to the current `idea_id`, `branch`, and `run_id`; do not casually reuse memory from another idea line unless you are explicitly comparing lines
 
-Write to memory only when the lesson is reusable, such as:
-
-- experiment failure patterns
-- stable implementation lessons
-- evaluation pitfalls
-- validated mechanism scope and caveats
-
+Write to memory only when the lesson is reusable, such as experiment failure patterns, stable implementation lessons, evaluation pitfalls, or validated mechanism scope and caveats.
 The canonical record of the run itself belongs in `artifact`, not only in memory.
-
-Preferred memory usage:
-
-- quest `ideas`:
-  - the current idea contract and claim boundary
-- quest `decisions`:
-  - run-scope choices
-  - retry or branch decisions
-  - stop conditions that must not drift
-- quest `episodes`:
-  - failed runs
-  - debugging episodes
-  - suspicious-result investigations
-  - repeated infrastructure or resource failures
-- quest `knowledge`:
-  - validated mechanism scope
-  - evaluation caveats
-  - stable implementation lessons worth reusing in later runs of this quest
-- global `knowledge`:
-  - reusable debugging heuristics
-  - stable reproducibility lessons
-  - cross-quest experiment design playbooks
-- global `templates`:
-  - run-manifest patterns
-  - claim-validation templates
-  - experiment summary templates
-
-Use tags to refine retrieval when helpful, for example:
-
-- `stage:experiment`
-- `type:failure-pattern`
-- `type:metric-contract`
-- `type:claim-validation`
-- `topic:<mechanism>`
-
 When calling `memory.write(...)`, pass `tags` as an array like `["stage:experiment", "type:failure-pattern", "topic:<mechanism>"]`, not as one comma-joined string.
-
-Recommended read timing:
-
-- before the first run:
-  - consult quest `ideas`, `decisions`, and relevant `knowledge`
-- before a retry:
-  - search quest `episodes` first
-- before changing execution strategy materially:
-  - re-check quest `decisions`
-- after suspicious results:
-  - consult recent `episodes` and stable debugging `knowledge`
 
 Stage-end requirement:
 
 - successful runs should leave at least one reusable knowledge note if the lesson generalizes
 - failed or partial runs should leave an incident note when the failure pattern is reusable
+- if a smoke test or pilot established a reusable execution fact, evaluator fact, or non-repeat rule, write that lesson before the next retry or route change depends on it
 - every experiment `memory.write(...)` must state whether the outcome was `success`, `partial`, or `failure`
 - every experiment `memory.write(...)` should also include the current `idea_id`, `branch`, and `run_id` so later retrieval does not mix different experiment lines
 
 ## Artifact rules
 
-Typical artifact sequence:
-
-- progress artifact for long runs
-- `artifact.record_main_experiment(...)` at main-run completion
-- milestone or report artifact for major findings
-- decision artifact to choose next stage
-
-Preferred artifact choices:
-
 - use `progress` for long-running execution updates
 - use `artifact.record_main_experiment(...)` for each meaningful completed main experiment
-- use `run` for analysis slice records when `artifact.record_analysis_slice(...)` writes them
-- use `report` for:
-  - analysis-rich summaries
-  - suspicious-result investigations
-  - post-run interpretation
-- use `milestone` when a major stage checkpoint is reached
-- use `decision` for:
-  - continue
-  - branch
-  - analysis
-  - write
-  - reset
-  - stop
+- use `report` for suspicious-result investigations or analysis-rich summaries when they materially help the next route
+- use `decision` for continue / branch / analysis / write / reset / stop
 - use `approval` when an explicit user approval is captured for an expensive or risky run change
-
-Use `artifact.checkpoint(...)` when code evolution is meaningful and should be preserved in Git.
-After a meaningful experiment checkpoint or completion, emit `artifact.interact(kind='progress' | 'milestone', ...)` so the user sees the concrete result and next step.
+- use `artifact.checkpoint(...)` when code evolution is meaningful and should be preserved in Git
+- after a meaningful experiment checkpoint or completion, emit `artifact.interact(kind='progress' | 'milestone', ...)` so the user sees the concrete result and next step
 
 ## Failure and blocked handling
 
 A failed main run is still useful if it is explained well.
 
-Record:
-
-- what was attempted
-- where the failure occurred
-- whether the failure is likely methodological or infrastructural
-- what retry, branch, or reset is justified
-- the single best next action
-
-Prefer a primary failure type such as:
-
-- `data_contract_mismatch`
-- `resource_exhausted`
-- `numeric_instability`
-- `implementation_bug`
-- `evaluation_pipeline_failure`
-- `external_dependency_blocked`
-- `direction_underperforming`
-
-Also classify the broader failure layer when possible:
-
-- implementation
-- evaluation
-- environment
-- direction
-
-Do not collapse these into one bucket.
-A direction should only be treated as failing when repeated, well-instrumented evidence still points to underperformance after implementation, evaluation, and environment explanations have been checked.
-
-Blocked experiment states commonly include:
-
-- missing baseline reference
-- unknown metric contract
-- environment failure
-- run failed before producing metrics
-- metrics produced but not comparable
-
-When results are suspicious, such as identical to baseline, implausibly perfect, or inconsistent across repeats, diagnose systematically:
-
-1. fix the subset and seeds
-2. isolate preprocessing, tokenization, model init, training, and evaluation one by one
-3. compare intermediate outputs on the same inputs
-4. align inputs first, then outputs, then metrics
-
-Default diagnosis loop:
-
-1. collect the concrete failure or anomaly cases
-2. identify the last-known-good comparable state
-3. define the smallest delta between working and broken states
-4. write `2-4` concrete hypotheses
-5. run the cheapest discriminative check before another full retry
+Record what was attempted, where the failure occurred, whether it was methodological or infrastructural, what retry/branch/reset is justified, and the single best next action.
+Prefer a primary failure type such as `data_contract_mismatch`, `resource_exhausted`, `numeric_instability`, `implementation_bug`, `evaluation_pipeline_failure`, `external_dependency_blocked`, or `direction_underperforming`.
+Also classify the broader failure layer when possible: implementation, evaluation, environment, or direction.
+Blocked experiment states commonly include missing baseline reference, unknown metric contract, environment failure, run failure before metrics, or metrics that are not comparable.
+When results are suspicious, fix the subset and seeds, isolate preprocessing/model/training/evaluation one by one, compare intermediate outputs on the same inputs, and run the cheapest discriminative check before another full retry.
 
 ## Exit criteria
 
@@ -818,3 +684,5 @@ Exit the experiment stage once one of the following is durably true:
 - a main run is completed and recorded
 - the run failed and the blocker is durably recorded
 - the next step is clearly `analysis-campaign`, `write`, another `experiment`, or `reset`
+
+A good experiment pass leaves one interpretable result or one explicit blocker, not another vague promise to rerun later.

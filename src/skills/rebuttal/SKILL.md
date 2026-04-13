@@ -7,6 +7,7 @@ skill_role: companion
 # Rebuttal
 
 Use this skill when the quest is in review, revision, or rebuttal mode.
+The goal is to turn reviewer pressure into the smallest honest revision program that can actually be executed.
 
 This is not the same as ordinary `write`.
 The task is no longer “draft the paper from evidence”.
@@ -482,3 +483,5 @@ Useful tags include:
 
 The goal is not just “write a nicer response”.
 The goal is to convert review pressure into a durable, auditable revision workflow.
+
+A good rebuttal pass leaves a concrete revision matrix and a concrete next action, not just a more persuasive tone.

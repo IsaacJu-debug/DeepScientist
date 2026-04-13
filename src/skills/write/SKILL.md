@@ -7,6 +7,7 @@ skill_role: stage
 # Write
 
 Use this skill to turn accepted evidence into a faithful draft, report, or paper bundle.
+The goal is to produce the lightest honest writing artifact the current evidence can really support, not to polish prose past the evidence boundary.
 This skill intentionally absorbs the strongest old DeepScientist writing discipline, including:
 
 - evidence assembly
@@ -156,7 +157,7 @@ Prefer an author-facing outline folder under `paper/outline/` with section-level
 
 ## Preconditions and gate
 
-Before writing seriously, confirm:
+Before paper-ready or submission-facing writing, confirm:
 
 - the baseline state is accepted or explicitly waived
 - the claims you intend to write are backed by durable artifacts
@@ -164,10 +165,12 @@ Before writing seriously, confirm:
 - the evaluation contract is explicit
 - the active paper line is known
 - the selected outline is present and reflects the current evidence line
-- `paper/outline/manifest.json` and any relevant section files are present when the outline folder flow is enabled
-- `paper/evidence_ledger.json` or `paper/evidence_ledger.md` reflects the current mapped paper evidence set
-- `paper/paper_experiment_matrix.md` reflects the current paper-facing experiment and analysis frontier when that planning surface is in use
-- completed relevant analysis results under `experiments/analysis-results/` are mapped into the selected outline or matrix rather than floating only as standalone reports
+- when the outline-folder flow is enabled, the key outline files are present
+- when the paper line is being stabilized rather than just drafted, `paper/evidence_ledger.json` or `paper/evidence_ledger.md` should reflect the current mapped paper evidence set
+- when the paper line is being stabilized rather than just drafted, `paper/paper_experiment_matrix.md` should reflect the current paper-facing experiment and analysis frontier
+- when relevant analysis results are meant to support the active paper line, they should be mapped into the selected outline or matrix rather than floating only as standalone reports
+
+For lighter draft-building work, a selected outline plus the core supporting evidence can be enough; do not block ordinary drafting on the full submission-hardening surface unless the current goal is actually paper-ready or submission-ready writing.
 
 If major claims lack evidence, surface the gap first.
 If the selected outline, outline folder, evidence ledger, or matrix feels underspecified, read `references/outline-evidence-contract-example.md` before drafting further.
@@ -503,6 +506,8 @@ If these are still unstable, continue planning or route back for evidence instea
 
 Do not rush into polished prose before evidence assembly, figure planning, and citation verification are far enough along to keep the draft honest.
 If writing uncovers missing information, it is acceptable to return to focused literature search or artifact reading, but persist the findings immediately before resuming drafting.
+If DeepXiv is declared available by the system prompt, prefer the DeepXiv route for paper-centric reference discovery and shortlist paper triage before broader open-web search.
+If DeepXiv is declared unavailable, do not try to force it; stay on the legacy route.
 Use web search to discover missing papers or references, and use `artifact.arxiv(paper_id=..., full_text=False)` when you need to actually read an arXiv paper rather than just locate it.
 Only set `full_text=True` when the shorter view is insufficient for the needed detail.
 Before treating related work coverage as adequate, run broad literature discovery and reading passes; for a normal paper-like deliverable, aim for roughly `30` to `50` verified references unless the scope clearly justifies fewer.
@@ -981,7 +986,7 @@ Each figure or table should be traceable to source artifacts.
 
 ### Phase 7. Claim-evidence map and self-review
 
-Before the full adversarial self-review, run a quick reviewer-first pass and record it in `paper/reviewer_first_pass.md`.
+Before paper-ready or submission-facing completion, a quick reviewer-first pass in `paper/reviewer_first_pass.md` is usually helpful.
 
 That pass should answer:
 
@@ -989,7 +994,7 @@ That pass should answer:
 - what is most likely to confuse that reviewer first
 - what part of the first page still feels author-centered rather than reader-centered
 
-Before declaring writing complete, build a claim-evidence map.
+Before declaring paper-ready or submission-facing writing complete, build a claim-evidence map.
 
 For each key claim, record:
 
@@ -1003,7 +1008,7 @@ Also keep the related-work and figure reasoning explicit:
 - in `paper/related_work_map.md`, record the closest competing methods, the comparison axes, and the exact claimed distinction
 - in `paper/figure_storyboard.md`, record what question each figure/table answers, why it belongs in the main text or appendix, and the intended caption takeaway
 
-Then run a harsh self-review:
+Then run a harsh self-review when the current goal is paper-ready or submission-facing writing:
 
 - claim/evidence audit
 - method fidelity audit
@@ -1046,13 +1051,13 @@ Run that review with an adversarial mindset:
 - prefer deleting or downgrading an attractive but weak claim over defending it with rhetoric
 - if a neutral outsider could not trace a claim back to concrete evidence, treat that as a writing failure, not as a presentation problem
 
-When the draft is substantial enough to judge rather than merely sketch, open `review/SKILL.md` for an independent skeptical audit before you call the paper task done.
+When the draft is substantial enough to judge rather than merely sketch, consider opening `review/SKILL.md` for an independent skeptical audit before you call the paper task done.
 Use that review pass to decide whether the next route is further writing, a claim downgrade, a literature audit, a baseline recovery step, or a reviewer-linked follow-up experiment campaign.
 
 ### Phase 7.5. Revision loop
 
-Do not stop after a single self-review pass.
-For paper-style deliverables, a strong default is a five-pass revision loop:
+Do not treat a single self-review pass as the only reasonable stopping condition.
+For paper-style deliverables, one strong default is a multi-pass revision loop such as five passes:
 
 1. fix critical accuracy and evidence issues
 2. verify structural and checklist compliance
@@ -1341,3 +1346,5 @@ Exit the write stage only when one of the following is durably true:
 - a packaging or proofing blocker has been recorded and the next action is explicit
 
 For paper-like writing, do not treat the draft as evidence-complete enough for `finalize` while `paper/paper_experiment_matrix.*` still contains currently feasible non-optional rows that remain unresolved.
+
+A good writing pass leaves a clearer draft, a clearer gap, or a clearer route-back decision, not an endless polishing loop.

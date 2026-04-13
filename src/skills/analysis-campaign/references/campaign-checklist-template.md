@@ -1,6 +1,7 @@
 # Analysis Campaign Checklist Template
 
 Use this as the living execution checklist for the campaign.
+For `analysis-lite`, the launch, first slice, and closeout sections are usually enough.
 
 ## Identity
 
@@ -45,7 +46,7 @@ Use this as the living execution checklist for the campaign.
 
 - [ ] first claim-critical slice launched
 - [ ] smoke checks passed for long slices
-- [ ] monitoring cadence active
+- [ ] monitoring is active when slices are long enough to need it
 - [ ] any slice redesign reflected in `PLAN.md`
 - [ ] each finished slice recorded durably
 

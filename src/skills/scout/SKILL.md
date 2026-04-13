@@ -7,6 +7,7 @@ skill_role: stage
 # Scout
 
 Use this skill when the quest does not yet have a stable research frame.
+The goal is to make the task frame concrete enough that a heavier stage can start with confidence.
 
 ## Interaction discipline
 
@@ -60,9 +61,10 @@ If one of these layers is still missing, say so explicitly.
 - Do not rely on memory alone when primary sources or durable quest files exist.
 - Before broad external search, check quest/global memory first with `memory.list_recent(...)` and `memory.search(...)`.
 - When search tools are available, actively use them.
-  Prefer web search for paper discovery, usually targeting arXiv first, then expand with benchmark docs, official repos, and broader web search for provenance.
+  If DeepXiv is declared available by the system prompt, prefer the DeepXiv route for paper-centric discovery and shortlist paper triage before broader open-web search.
+  If DeepXiv is declared unavailable, stay on the legacy route: web search, memory reuse, benchmark docs, official repos, and broader provenance checks.
 - When a specific arXiv paper must be read or summarized, use `artifact.arxiv(paper_id=..., full_text=False)` instead of defaulting to a raw PDF.
-  Keep discovery in web search; use `artifact.arxiv(...)` only for actual paper reading, and set `full_text=True` only when needed.
+  Keep discovery in search tooling by default; use `artifact.arxiv(...)` only for actual paper reading, and set `full_text=True` only when needed.
 - Avoid repeating the same wide search from scratch.
   Reuse prior survey notes and search only for genuinely missing, newer, or unresolved references.
 - Do not write long paper summaries that do not change the next stage.
@@ -527,3 +529,5 @@ Typical next anchors:
 - `baseline`
 - `idea`
 - remain in `scout` only if the remaining blocker is explicit and durable
+
+A good scout pass makes the next anchor obvious or makes the blocker explicit enough that the system stops guessing.

@@ -7,6 +7,7 @@ skill_role: companion
 # Review
 
 Use this skill when the quest already has a substantial draft, paper, or paper-like report and now needs an independent, skeptical, evidence-grounded audit.
+The goal is to reduce revision ambiguity, not to sound harsh for its own sake.
 
 This is not the same as ordinary `write`.
 It is also not the same as `rebuttal`.
@@ -412,3 +413,5 @@ Useful tags include:
 
 The goal is not to sound severe.
 The goal is to make the next revision step technically clear and evidence-bound.
+
+A good review pass leaves fewer plausible next moves, not more.

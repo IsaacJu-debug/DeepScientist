@@ -7,6 +7,7 @@ skill_role: stage
 # Idea
 
 Use this skill to turn the current baseline and problem frame into concrete, literature-grounded, testable directions.
+The goal is to choose the next executable research route, not to maximize brainstorming volume.
 
 When `startup_contract.need_research_paper = false` and the quest already has a concrete optimization handle, `idea` may stop after selecting or seeding a direction and then hand off into `optimize` instead of insisting on the full paper-oriented ideation loop.
 In that algorithm-first case, `idea` should usually produce a small method-brief frontier and then defer candidate ranking, promotion, and bounded search to `optimize`.
@@ -143,26 +144,27 @@ Break ties primarily through careful reasoning over:
 - Do not select an idea before checking whether close prior work already did it.
 - Do not confuse "I can implement this" with "this is a publishable or useful research direction".
 - Do not treat a weak literature search as sufficient because the idea sounds elegant.
-- Do not write, promote, or submit a final idea until the durable survey covers at least `5` and usually `5-10` task-modeling-related, mechanism-relevant, or otherwise directly usable papers.
-- Treat that literature floor as a hard gate, not a suggestion.
-  If the direct task-modeling neighborhood truly contains fewer than `5` usable papers, record that evidence explicitly and fill the remaining slots with the closest adjacent papers whose mechanism can be translated into the current task and codebase.
+- For paper-ready idea packages, aim for a durable survey that usually covers at least `5` and often `5-10` task-modeling-related, mechanism-relevant, or otherwise directly usable papers.
+- If the direct task-modeling neighborhood truly contains fewer than `5` usable papers, record that evidence explicitly and fill the remaining coverage with the closest adjacent papers whose mechanism can still be translated into the current task and codebase.
 - Algorithm-first exception:
   - when `startup_contract.need_research_paper = false` and a concrete optimization handle already exists, you may stop after a memory sweep plus a small targeted paper check instead of satisfying the full `5-10` paper floor
   - use that exception only when the immediate goal is method-brief selection for `optimize`, not paper-level novelty claims
   - if you use the exception, say explicitly that the output is an optimization brief frontier rather than a paper-ready idea package
   - still shape that frontier deliberately: clarify the bottleneck and comparability boundary first, keep a differentiated `2-3` candidate slate, and explain why one brief is recommended now
-- Every fresh idea build or idea-refinement pass must begin with:
+- Every fresh idea build or idea-refinement pass should begin with:
   - a memory sweep, and
-  - an external literature sweep.
-- Every fresh or resumed idea pass must update `artifacts/idea/literature_survey.md` or an equivalent durable survey report before a direction is promoted.
+  - an external literature sweep or a clear reason why the existing survey is already sufficient.
+- For paper-ready promotion, refresh `artifacts/idea/literature_survey.md` or an equivalent durable survey report before the direction is promoted.
 - Every survey update must explicitly separate:
   - reused prior survey coverage
   - newly added papers or comparisons from this pass
   - still-missing or unresolved overlaps
 - When a web/search tool is available, actively use it.
   Prefer web search for paper discovery, usually targeting arXiv first, then expand with citation and open-web search for neighborhood coverage.
+- If DeepXiv is declared available by the system prompt, prefer the DeepXiv route for paper-centric discovery and shortlist paper triage before broad open-web search.
+- If DeepXiv is declared unavailable, do not try to force it; stay on the legacy route.
 - When a concrete arXiv paper needs to be read, compared, or summarized, use `artifact.arxiv(paper_id=..., full_text=False)`.
-  Keep search in web discovery; use `artifact.arxiv(...)` for reading shortlisted papers, and set `full_text=True` only when needed.
+  Keep search in web discovery by default; use `artifact.arxiv(...)` for reading shortlisted papers, and set `full_text=True` only when needed.
 - Before opening a broad new search, check quest and global memory with `memory.search(...)` and reuse existing paper notes, idea notes, and knowledge cards.
 - Search for genuinely missing, newly relevant, or more recent papers whenever possible.
   Do not rerun the same broad search without stating what gap the new search is meant to close.
@@ -1251,9 +1253,9 @@ Preferred artifact choices:
 - use `approval` when the user explicitly confirms a preference-sensitive choice
 - use `milestone` when ideation hits a meaningful user-visible checkpoint
 
-If the idea is selected and becomes the active route, immediately call `artifact.submit_idea(mode='create', lineage_intent='continue_line'|'branch_alternative', ...)`.
+If the idea is selected and becomes the active durable route, normally call `artifact.submit_idea(mode='create', lineage_intent='continue_line'|'branch_alternative', ...)`.
 Before that call, first finalize a concise but durable Markdown draft for the chosen route.
-Do not start writing that final draft until the literature survey has already met the hard minimum of at least `5` and usually `5-10` usable papers.
+For a paper-ready idea package, do not finalize that draft until the literature survey is broad enough to support the route credibly; for an execution-brief handoff, a smaller targeted survey can be enough.
 That draft should usually cover:
 
 - executive summary
@@ -1310,3 +1312,5 @@ Do not exit this stage with a "selected idea" if:
 - the novelty / value verdict is still hand-wavy
 - the falsification path is unclear
 - the experiment handoff contract is incomplete
+
+A good idea pass ends with one route the next stage can actually run, or one explicit reason why no route is ready yet.

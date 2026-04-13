@@ -2,31 +2,26 @@
 
 Use this reference when deciding whether a baseline is truly usable downstream.
 
-## Minimum contract
+## Minimum or core contract
 
 Make these fields explicit:
 
 - task identity
 - dataset identity
-- dataset version
 - split contract
-- preprocessing boundary
 - evaluation script or path
 - required metric keys
 - metric directions
-- seed policy if relevant
 - source commit or package identity
 - known deviations
 
+A core contract is enough for a `comparison_ready` baseline.
+Expand to a fuller contract only when later paper claims, variant-heavy comparison, or publication really need it.
+
 ## Verdict logic
 
-- `verified`:
-  - comparison contract is stable enough for downstream work
-- `partially_verified`:
-  - mostly usable, but caveats must travel with it
-- `operational_but_incomparable`:
-  - the system runs, but later stages should not treat it as a clean comparison
-- `failed`:
-  - not suitable as a baseline
+- usable now
+- usable with caveats
+- blocked
 
 If later `experiment` work would have to keep guessing the comparison contract, the baseline is not ready.

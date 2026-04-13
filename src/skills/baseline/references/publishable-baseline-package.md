@@ -1,6 +1,7 @@
 # Publishable Baseline Package
 
-Use this reference before attaching or publishing a baseline for reuse.
+Use this reference only when attaching or publishing a baseline for reuse beyond the current quest.
+It is not the default exit target for every baseline pass.
 
 ## Minimum package contents
 
@@ -9,18 +10,8 @@ Use this reference before attaching or publishing a baseline for reuse.
 - source provenance
 - trusted metrics
 - exact path to the baseline root
-- command or execution summary
-- verification summary
+- short execution or verification summary
 - key caveats
-
-## Strong package contents
-
-- variant structure
-- environment summary
-- config snapshot pointers
-- logs and result paths
-- explicit statement of downstream trust
-- explicit statement of global reusability
 
 ## Do not publish if
 

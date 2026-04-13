@@ -7,6 +7,7 @@ skill_role: stage
 # Optimize
 
 Use this skill for algorithm-first quests where the goal is the strongest justified optimization result rather than paper packaging.
+The goal is to move the frontier by one justified step at a time, not to generate a large pile of low-information candidates.
 
 This skill is the lightweight optimization control layer for DeepScientist.
 It does not replace the normal quest runtime. It tells you how to use the existing DeepScientist artifact, memory, bash_exec, Git, and worktree mechanisms as an optimization system.
@@ -1656,3 +1657,5 @@ For debugging:
 - state the likely root cause
 - require the minimal targeted fix
 - preserve the original solution intent unless the bug proves the design invalid
+
+A good optimize pass changes the frontier or stops a stale line; it does not keep generating activity without moving the incumbent.

@@ -7,6 +7,7 @@ skill_role: stage
 # Analysis Campaign
 
 Use this skill when one or more follow-up runs are needed and the quest needs a coordinated evidence campaign.
+The goal is to answer a bounded follow-up evidence question, not to keep opening more slices just because they are imaginable.
 
 This is the shared DeepScientist protocol for supplementary experiments after a durable result.
 Use the same route for:
@@ -34,40 +35,28 @@ Do not invent a separate experiment system for those cases.
 - Keep ordinary subtask completions concise. When an analysis campaign or a stage-significant campaign checkpoint is complete, upgrade to a richer `artifact.interact(kind='milestone', reply_mode='threaded', ...)` report.
 - That richer campaign milestone report should normally cover: which slices completed, the main takeaway, whether the claim got stronger or weaker, and the exact recommended next route.
 - That richer milestone report is still normally non-blocking. If the post-campaign route is already clear, continue automatically after reporting instead of waiting for explicit acknowledgment.
-- If the active communication surface is QQ and QQ milestone media is enabled in config, prefer at most one aggregated campaign summary PNG on a meaningful campaign milestone.
-- That attachment should summarize the campaign as a whole; do not auto-send one image per slice.
-- Treat connector-facing campaign PNGs as report charts, not draft paper figures.
+- If the active communication surface is QQ and QQ milestone media is enabled in config, prefer at most one aggregated campaign summary PNG on a meaningful campaign milestone, and do not auto-send one image per slice.
+- That attachment should summarize the campaign as a whole and should be a report chart, not a draft paper figure.
 - Preferred connector-chart palettes are Morandi-like and restrained:
-  - `sage-clay`: `#E7E1D6`, `#B7A99A`, `#7F8F84` for the default aggregated campaign summary
-  - `mist-stone`: `#F3EEE8`, `#D8D1C7`, `#8A9199` for conservative or uncertainty-heavy summaries
-  - `dust-rose`: `#F2E9E6`, `#D8C3BC`, `#B88C8C` only as a secondary accent when an extra comparison is necessary
+  - `sage-clay`: `#E7E1D6`, `#B7A99A`, `#7F8F84`
+  - `mist-stone`: `#F3EEE8`, `#D8D1C7`, `#8A9199`
+  - `dust-rose`: `#F2E9E6`, `#D8C3BC`, `#B88C8C`
 - Connector-facing campaign chart requirements:
   - one campaign-level message, not a crowded slice dashboard
-  - low saturation and limited color count
-  - clear aggregation labels and direct comparison against the main run or baseline
+  - low saturation, clear aggregation labels, and direct comparison against the main run or baseline
   - prefer one summary figure that communicates the boundary change honestly
-- Preferred campaign summaries are:
-  - point-range or bar summaries for slice-to-slice endpoint comparisons
-  - line plots only when the x-axis is truly ordered and comparable across slices
-  - small multiples instead of one rainbow figure when slices answer different questions
-- If a campaign view uses continuous color, keep it sequential for ordered magnitude and diverging only for signed deltas around a meaningful center.
-- Avoid rainbow / jet-like maps and decorative heatmaps when a simpler comparison plot would communicate the result better.
-- Keep the same muted palette semantics across the full campaign so the same color means the same role in every slice summary.
 - If a campaign figure is milestone-facing, paper-facing, or otherwise durable, open `figure-polish/SKILL.md` and complete its render-inspect-revise pass before treating the figure as final.
 - If plotting in Python, reuse the fixed Morandi plotting starter from the system prompt and keep the same palette discipline across the whole campaign.
 - If the runtime starts an auto-continue turn with no new user message, resume from the current campaign state and active requirements instead of replaying the previous user turn.
 - Progress message templates are references only. Adapt to the actual context and vary wording so messages feel human, respectful, and non-robotic.
 - If a threaded user reply arrives, interpret it relative to the latest campaign progress update before assuming the task changed completely.
 
-## Three-layer todo contract
+## Planning surfaces
 
 - keep quest-root `plan.md` as the quest-level research map and parent loop tracker
-- keep workspace `PLAN.md` as the current campaign-node charter
+- keep workspace `PLAN.md` as the current campaign-node charter only when the campaign is genuinely multi-slice, writing-facing, or route-changing
 - keep workspace `CHECKLIST.md` as the campaign execution frontier; when writing-facing `todo_items` exist, treat them as the bottom-layer frontier rather than as a second parallel planning system
 - if the frontier stops changing across repeated passes, revise the campaign node or route instead of opening nested slice subtrees in chat
-
-## Research-map role
-
 - an analysis campaign is a subordinate evidence node under a parent experiment or paper-facing loop state
 - finishing or blocking a campaign should update quest-root `plan.md` with the next edge back to write, decision, another experiment node, or stop
 
@@ -91,12 +80,13 @@ When the campaign is paper-facing and the mapping fields are not obvious, also r
 Treat this as the compressed campaign map. The authoritative slice protocol and aggregation rules remain in `Workflow`.
 
 1. Bind the campaign to the parent run or idea and, when writing-facing, to the selected outline.
-2. When the campaign is writing-facing, refresh `paper/paper_experiment_matrix.*` before freezing the slice frontier.
-3. Before launching slices, create `PLAN.md` and `CHECKLIST.md`.
-4. Use `PLAN.md` as the durable charter and `CHECKLIST.md` as the living execution surface while launching, monitoring, recording, and aggregating slices.
-5. Run claim-critical slices first and smoke-test long slices before their real runs.
-6. Revise the plan and matrix if slice feasibility, ordering, comparators, or campaign interpretation changes materially, and record every slice durably, including honest non-success states.
-7. Close meaningful campaign milestones with a concise `1-2` sentence summary that says whether the claim gained stable support, partial support, contradiction, or unresolved ambiguity, what the matrix frontier now looks like, and what happens next.
+2. Decide whether this is `analysis-lite` or a full campaign.
+3. When the campaign is writing-facing, refresh `paper/paper_experiment_matrix.*` before freezing the slice frontier; for lighter non-paper campaigns, keep the frontier description as simple as possible.
+4. Before launching a non-trivial slice set, create `PLAN.md` and `CHECKLIST.md`; for lighter follow-up work, update the existing checklist/control surface instead of rebuilding a heavy charter.
+5. Use `PLAN.md` as the durable charter only when the campaign really needs one, and use `CHECKLIST.md` as the living execution surface while launching, monitoring, recording, and aggregating slices.
+6. Run claim-critical slices first, and only smoke-test long or still-unverified slice paths before their real runs; keep smoke budget at `0-2` for a slice family or route change rather than reflexively smoke-testing every slice.
+7. Revise the plan and matrix if slice feasibility, ordering, comparators, or campaign interpretation changes materially, and record every slice durably, including honest non-success states.
+8. Close meaningful campaign milestones with a concise `1-2` sentence summary that says whether the claim gained stable support, partial support, contradiction, or unresolved ambiguity, what the matrix frontier now looks like, and what happens next.
 
 ## Non-negotiable rules
 
@@ -104,11 +94,11 @@ Treat this as the compressed campaign map. The authoritative slice protocol and 
 - Do not introduce human evaluation or subjective assessment into a campaign.
 - Do not bring in a new dataset unless the quest scope explicitly changed.
 - Every analysis slice must have a specific research question and a falsifiable or at least decision-relevant expectation.
-- If the campaign is supporting a paper or paper-like report, do not launch it until a selected outline exists.
+- If the campaign is directly supporting a paper or paper-like report section, do not launch it until a selected outline exists.
 - When a selected outline exists, every slice should map to a named `research_question` and `experimental_design` from that outline.
-- When the campaign is supporting a paper or paper-like report, do not launch or reorder the slice set without first reading `paper/paper_experiment_matrix.md` when it exists.
+- When the campaign is directly supporting a paper or paper-like report, do not launch or reorder the slice set without first reading `paper/paper_experiment_matrix.md` when it exists.
 - For writing-facing campaigns, every slice should correspond to a stable matrix row such as `exp_id`, not just a free-form note.
-- For writing-facing campaigns, every todo item must also carry `section_id`, `item_id`, `claim_links`, and `paper_role`; otherwise the slice is not paper-ready.
+- For writing-facing campaigns, every todo item must at least carry `paper_role`, and paper-ready slices should also carry `section_id`, `item_id`, and `claim_links`.
 - Do not aggregate campaign conclusions without per-run evidence.
 - Do not bury null or contradictory findings.
 
@@ -162,17 +152,28 @@ For concrete paper-facing cases:
 
 Do not leave a slice "completed" while the paper contract still looks stale.
 
+Two follow-up tiers are acceptable:
+
+- `analysis-lite`
+  - one clear follow-up question
+  - one slice or a very small slice set
+  - no heavy charter beyond a compact control-surface update unless the route changes
+- `full campaign`
+  - multiple slices, writing-facing evidence, or a result that genuinely changes the parent route
+  - use the fuller `PLAN.md` / `CHECKLIST.md` / matrix contract
+
 ## Required plan and checklist
 
-Before launching any real campaign slice, create a quest-visible `PLAN.md` and `CHECKLIST.md`.
+Before launching a non-trivial campaign slice set, create a quest-visible `PLAN.md` and `CHECKLIST.md`.
 
 - Use `references/campaign-plan-template.md` as the canonical structure for `PLAN.md`.
 - Use `references/campaign-checklist-template.md` as the canonical structure for `CHECKLIST.md`.
 - keep quest-root `plan.md` synced with the parent experiment or paper-facing node and the campaign's actual next edge
-- `PLAN.md` is the durable campaign charter and should cover the claim under test, slice table, comparability boundary, available assets, required comparators, smoke and main-run strategy, monitoring and sleep rules, reporting expectations, and a revision log.
+- `PLAN.md` is the durable campaign charter when the campaign truly needs one, and should cover the claim under test, slice table, comparability boundary, available assets, required comparators, testing/run strategy, reporting expectations, and a revision log.
 - `CHECKLIST.md` is the living campaign execution list; update it during launch, asset preparation, slice execution, aggregation, and route changes.
 - If slice ordering, feasibility, required baselines, campaign interpretation, or the writing-facing outline mapping changes materially, revise `PLAN.md` before continuing.
-- The later charter report, slice artifacts, and aggregate report remain required, but `PLAN.md` and `CHECKLIST.md` should be the canonical campaign-control surface during execution.
+- For `analysis-lite`, a compact frontier update is enough if the active question, expected output, and next route remain obvious.
+- The later charter report, slice artifacts, and aggregate report remain required for fuller campaigns, but `PLAN.md` and `CHECKLIST.md` should be the canonical campaign-control surface during execution.
 
 ## Truth sources
 
@@ -228,7 +229,7 @@ Before launching any slice, record the campaign start through artifacts:
 3. update `plan.md` if the campaign materially changes the quest path
 
 Do not start a multi-slice campaign from chat-only intent.
-Do not start it from chat-only intent plus vague notes either: write `PLAN.md` and `CHECKLIST.md` first, using `references/campaign-plan-template.md` and `references/campaign-checklist-template.md` as the default structures.
+Do not start it from chat-only intent plus vague notes either: for a real multi-slice campaign, write `PLAN.md` and `CHECKLIST.md` first using `references/campaign-plan-template.md` and `references/campaign-checklist-template.md` as the default structures.
 
 After the charter and launch decision are durably recorded, send one threaded `artifact.interact(kind='milestone', ...)` update naming:
 
@@ -246,11 +247,7 @@ If the campaign exists to support a paper or paper-like report:
 - if no selected outline exists yet, route to `write` or `decision` first so the outline can be created and selected durably
 - before deciding the slice list, create or refresh `paper/paper_experiment_matrix.md` when it is missing or stale
 - treat that matrix as the upstream paper experiment contract, not `todo_items` alone
-- use the matrix to decide:
-  - which rows are `main_required`
-  - which are `main_optional`
-  - which are appendix-only
-  - which are optional or should be dropped
+- use the matrix to decide which rows are `main_required`, `main_optional`, appendix-only, or worth dropping
 - do not start stable experiments-section drafting while currently feasible non-optional matrix rows remain unresolved
 - call `artifact.create_analysis_campaign(...)` with:
   - `selected_outline_ref`
@@ -270,15 +267,13 @@ If the campaign exists to support a paper or paper-like report:
 
 For writing-facing campaigns, every slice should also carry paper-contract identity, not just free-form text:
 
+- `paper_role`
 - `section_id`
 - `item_id`
 - `claim_links`
-- `paper_role`
 
 Do not treat a completed analysis slice as paper-ready until those fields exist and the slice is mappable back into the selected outline or paper experiment matrix.
 Use `references/writing-facing-slice-examples.md` when the correct field values are not obvious.
-
-This keeps the analysis campaign aligned with the paper plan instead of becoming a free-floating batch of slices.
 
 ### 1. Define the campaign charter
 
@@ -293,9 +288,7 @@ State:
 
 The charter should also include:
 
-- campaign type priority order
 - expected slice count
-- dependency structure between slices
 - the matrix path and current execution frontier
 - whether any slice requires isolated code changes or only reruns/config changes
 - the top-level success condition for ending the campaign
@@ -309,13 +302,7 @@ For each analysis question, also state:
 - whether it exists mainly to support a core claim, validate a highlight, answer an efficiency or cost concern, or bound a limitation
 - what result would strengthen the claim
 - what result would weaken or complicate the claim
-- whether the run is:
-  - ablation
-  - robustness
-  - sensitivity
-  - error analysis
-  - efficiency
-  - environment variation
+- whether the run is ablation, robustness, sensitivity, error analysis, efficiency, or environment variation
 
 If there are many possible slices, order them by decision value:
 
@@ -360,21 +347,9 @@ Recommended extra per-slice fields:
 - `slice_class`, such as `auxiliary`, `claim-carrying`, or `supporting`
 - `tier`, such as `main_required`, `main_optional`, `appendix`, or `optional`
 - `paper_placement`
-- `highlight_ids`
 - `required_baselines`, where each item records at least `baseline_id` plus the reason, benchmark, and split when known
 
-If a slice needs an extra comparator baseline:
-
-- reproduce it under `baselines/local/<baseline_id>/` unless it is attached under `baselines/imported/<baseline_id>/`
-- keep the usual durable baseline notes there, including `analysis_plan.md`, `setup.md`, `execution.md`, and `verification.md`
-- do not overwrite the canonical quest baseline gate just because an analysis slice needed a supplementary baseline
-- after the comparator is ready, record it back through `record_analysis_slice(..., comparison_baselines=[...])` with its `baseline_id`, path, benchmark/split, and metrics summary
-- `parent_run_id`
-- whether a code diff is required
-- whether an isolated branch/worktree is required
-- quantitative success criteria
-- quantitative abandonment criteria
-- contingency trigger for the next slice
+If a slice needs an extra comparator baseline, place it under the normal baseline roots, do not overwrite the canonical quest baseline gate, and record it back through `record_analysis_slice(..., comparison_baselines=[...])`.
 
 Recommended `run_kind` naming in the current runtime:
 
@@ -386,9 +361,9 @@ Recommended `run_kind` naming in the current runtime:
 - `analysis.environment`
 
 Create the campaign with `artifact.create_analysis_campaign(...)` before starting any slice.
-Even one extra experiment should still be represented as a one-slice campaign so Git and Canvas show a real child node.
+Even one extra experiment can still be represented as a one-slice campaign when durable lineage matters, but use that overhead only when it materially helps execution or later review.
 Branch that campaign from the current workspace/result node rather than mutating the completed parent node in place.
-That tool should receive the full slice list, and each returned slice worktree becomes the required execution location for that slice.
+That tool should receive the slice list, and each returned slice worktree becomes the required execution location for that slice.
 Only create the campaign after you have verified that the listed slices are actually executable with the current quest assets and runtime.
 When the campaign is writing-facing, the same call should also carry `selected_outline_ref`, `research_questions`, `experimental_designs`, and `todo_items`.
 If ids or refs are unclear, recover them first with `artifact.resolve_runtime_refs(...)`, `artifact.get_analysis_campaign(...)`, or `artifact.list_paper_outlines(...)` instead of guessing.
@@ -418,25 +393,25 @@ Use those six fields to keep each slice readable at a glance from Canvas, stage 
 The longer prose still matters, but the six-field summary is the stable routing summary.
 
 For writing-facing campaigns, prefer running `claim-carrying` slices before `supporting` slices unless an auxiliary check is required to make the main slice interpretable.
+If two slices in a row fail to change the claim boundary, matrix frontier, or next route, stop widening the campaign and route through `decision` or `write`.
 
-For slices that run longer than a quick smoke check:
+For slices that run longer than a quick validation check:
 
-- first run a bounded smoke test so the slice command, outputs, and metric path are validated cheaply
-- once the smoke test passes, launch the real slice with `bash_exec(mode='detach', ...)` and normally leave `timeout_seconds` unset for that long run
+- if the slice command, outputs, or metric path are still unverified, run one bounded smoke test first
+- keep smoke budget at `0-2` for the current slice family or route change
+- allow a second smoke only after a real code, command, environment, or evaluator change
+- once the path is verified, launch the real slice with `bash_exec(mode='detach', ...)` and normally leave `timeout_seconds` unset for that long run
 - `bash_exec(mode='read', id=...)` returns the full rendered log when it is 2000 lines or fewer; for longer logs it returns the first 500 lines plus the last 1500 lines and a hint to inspect omitted sections with `start` and `tail`
 - if you need a middle section that was omitted from that default preview, use `bash_exec(mode='read', id=..., start=..., tail=...)`
 - monitor them with `bash_exec(mode='list')` and `bash_exec(mode='read', id=..., tail_limit=..., order='desc')`
 - after the first read, prefer `bash_exec(mode='read', id=..., after_seq=last_seen_seq, tail_limit=..., order='asc')` for incremental monitoring
 - if ids become unclear, recover them through `bash_exec(mode='history')`
-- launch long slices with a structured `comment` such as `{stage, goal, action, expected_signal, next_check}`
 - use `silent_seconds`, `progress_age_seconds`, `signal_age_seconds`, and `watchdog_overdue` from `bash_exec(mode='list'|'read', ...)` as the default stall checks
-- use an explicit wait-and-check cadence of about `60s`, `120s`, `300s`, `600s`, `1800s`, then every `1800s` while still running
 - if needed, use an explicit bounded wait such as `bash_exec(command='sleep 60', mode='await', timeout_seconds=70)` or `bash_exec(mode='await', id=..., timeout_seconds=...)` between checks
 - canonical sleep choice:
   - if you only need wall-clock waiting between checks, use `bash_exec(command='sleep N', mode='await', timeout_seconds=N+buffer, ...)`
   - keep a real buffer on that sleep timeout; do not set `timeout_seconds` exactly equal to `N`
   - if you are waiting on an already running managed session, prefer `bash_exec(mode='await', id=..., timeout_seconds=...)` instead of starting a new sleep command
-- after the first meaningful signal and then at real checkpoints (e.g., completion, blocker, recovery, or a materially changed evidence frontier), send `artifact.interact(kind='progress', ...)` so the user sees the newest real state
 - after each completed sleep / await monitoring cycle for an active slice, inspect state first; only send another `artifact.interact(kind='progress', ...)` update if the user-visible state materially changed
 - include the estimated next reply time or next check time in those monitoring updates
 - stop them with `bash_exec(mode='kill', id=..., wait=true, timeout_seconds=...)` if the slice is invalid, wedged, or superseded; add `force=true` when immediate termination is required
@@ -485,22 +460,7 @@ Preferred per-slice summary shape:
 - interpretation
 - caveats
 
-Each completed slice should also leave a `run` artifact containing at least:
-
-- `campaign_id`
-- `slice_id`
-- `run_kind`
-- `parent_run_id`
-- `analysis_question`
-- `fixed_conditions`
-- `changed_factors`
-- `metrics_summary`
-- `metric_deltas`
-- `success_criteria`
-- `abandonment_criteria`
-- `verdict`
-- `reason`
-- `paths`
+Each completed slice should also leave a `run` artifact containing at least `campaign_id`, `slice_id`, `run_kind`, `parent_run_id`, `analysis_question`, `fixed_conditions`, `changed_factors`, `metrics_summary`, `metric_deltas`, `verdict`, `reason`, and `paths`.
 
 If a slice fails before producing evidence, still record it as a failed or partial `run` artifact rather than silently skipping it.
 
@@ -521,31 +481,17 @@ Campaign reporting rules:
 - focus on the highest-impact findings first
 - results matter more than process narration
 - if using tables, show only the most decision-relevant rows
-- separate:
-  - stable support
-  - partial support
-  - contradiction
-  - unresolved ambiguity
+- separate stable support, partial support, contradiction, and unresolved ambiguity
 
 When there are many slices, summarize the top `3-5` most important ones first, then point to the full evidence paths.
 
-The aggregated report should also answer:
-
-- should the main claim be strengthened, weakened, narrowed, or abandoned?
-- which slice changed the interpretation most?
-- which slice is still worth rerunning, and why?
-- which planned slices were intentionally skipped because earlier results made them low value?
+The aggregated report should also answer whether the main claim should be strengthened, weakened, narrowed, or abandoned, which slice changed the interpretation most, and which planned slices were intentionally skipped because earlier results made them low value.
 
 When the aggregated campaign report is complete, send a richer threaded `artifact.interact(kind='milestone', ...)` update.
 Lead that milestone with a concise `1-2` sentence campaign outcome summary before expanding into slice-level detail.
 
 If QQ milestone media is enabled and the aggregated report materially changes the claim boundary, you may attach one campaign summary PNG to that closing milestone update.
-That update should explicitly classify the campaign outcome in the same language as the report:
-
-- stable support
-- partial support
-- contradiction
-- unresolved ambiguity
+That update should explicitly classify the campaign outcome in the same language as the report: stable support, partial support, contradiction, or unresolved ambiguity.
 
 ### 6. Route the next step
 
@@ -557,20 +503,7 @@ A campaign should end with an explicit next move:
 - stop or reset the current line
 
 Record the post-campaign route as a `decision` artifact.
-When helpful, include a reflection block with:
-
-- `what_worked`
-- `what_failed`
-- `learned_constraints`
-
-and a `next_direction` block that states:
-
-- objective
-- key steps
-- success criteria
-- abandonment criteria
-
-This makes the next stage executable without guesswork.
+When helpful, include a short reflection block with `what_worked`, `what_failed`, `learned_constraints`, and a `next_direction` block that states objective, key steps, success criteria, and abandonment criteria.
 
 ## Analysis-quality rules
 
@@ -581,15 +514,6 @@ Good campaign behavior:
 - clear comparison against the accepted reference line
 - visibility of null and negative findings
 - a logically ordered suite rather than a random batch
-
-Strong campaign ordering usually looks like:
-
-1. most claim-critical ablation or comparison
-2. strongest robustness or sensitivity checks
-3. failure-mode or error analysis
-4. efficiency or secondary analysis
-
-The exact order can vary, but the most claim-relevant evidence should appear first.
 
 Weak campaign behavior:
 
@@ -605,42 +529,31 @@ Stage-start requirement:
 
 - begin every analysis campaign pass with `memory.list_recent(scope='quest', limit=5)`
 - then run at least one analysis-relevant `memory.search(...)` before launching or resuming slices
+- before reopening a previously tested slice family, smoke route, or environment fix, search memory for the last trusted result or explicit non-repeat rule
 - if several campaigns, parent runs, or idea lines exist, narrow retrieval to the current `campaign_id`, `parent_run_id`, `idea_id`, or `branch` instead of mixing unrelated slice memory
 
-Write to memory only when the campaign yields reusable lessons, such as:
-
-- robust failure patterns
-- evaluation caveats
-- reproducible sensitivity findings
+Write to memory only when the campaign yields reusable lessons, such as robust failure patterns, evaluation caveats, or reproducible sensitivity findings.
 
 Stage-end requirement:
 
 - if the campaign produced a durable cross-slice lesson, failure pattern, or comparability caveat, write at least one `memory.write(...)` before leaving the stage
+- if a smoke test or cheap slice validation established a reusable command-path fact, evaluator fact, or non-repeat rule, write that lesson before the next retry or route change depends on it
 
 The campaign’s main record belongs in run artifacts and the aggregated report.
 When synthesizing the campaign, read the per-slice `evaluation_summary` fields first, then expand into longer evidence only where the short summaries are still ambiguous.
 
 ## Artifact rules
 
-Typical artifact sequence:
-
-- decision artifact to launch the campaign
-- report artifact for the charter
-- progress artifacts during long campaigns
-- run artifacts per analysis slice
-- report artifact for the aggregated campaign summary
-- decision artifact for the next anchor
+- use a `decision` artifact to launch the campaign
+- use a `report` artifact for the charter when the campaign is non-trivial
+- use `progress` artifacts during long campaigns
+- use one `run` artifact per analysis slice
+- use one aggregated `report`
+- use one closing `decision` for the next anchor
 
 ## Failure and blocked handling
 
-Record blocked or failed campaign states explicitly, such as:
-
-- missing parent run
-- analysis question under-specified
-- campaign run failed before evidence was produced
-- metrics not comparable
-- campaign conclusion still ambiguous
-
+Record blocked or failed campaign states explicitly, such as missing parent run, under-specified analysis question, run failure before evidence, non-comparable metrics, or still-ambiguous campaign conclusion.
 A blocked campaign should still name the next best action.
 
 ## Exit criteria
@@ -650,3 +563,5 @@ Exit the analysis-campaign stage once one of the following is durably true:
 - the campaign produced enough evidence for writing or decision-making
 - the campaign exposed a problem that requires returning to `experiment` or `idea`
 - the campaign is blocked and the blocker is durably recorded
+
+A good campaign closes when the claim got stronger, weaker, or clearly stuck, not when more slice ideas merely remain possible.

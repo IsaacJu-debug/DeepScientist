@@ -1,6 +1,7 @@
 # Baseline Memory Playbook
 
 Use this reference when deciding what should be stored in quest memory versus global memory during `baseline`.
+Do not treat this as a reason to block a simple fast-path baseline.
 
 ## Quest memory
 
@@ -18,21 +19,7 @@ Promote to global only when the lesson is reusable, such as:
 
 - stable environment fixes
 - reproducibility heuristics
-- verification heuristics
 - broadly useful dataset or benchmark caveats
-
-## Kinds
-
-- `episodes`:
-  - failures
-  - repair attempts
-  - environment incidents
-- `knowledge`:
-  - stable lessons
-  - reproducibility rules
-  - accepted caveats
-- `decisions`:
-  - route and acceptance rationale
 
 ## Promotion rule
 

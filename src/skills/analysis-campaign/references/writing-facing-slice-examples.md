@@ -1,6 +1,7 @@
 # Writing-Facing Slice Examples
 
 Use this reference when an analysis campaign is supporting a paper-like deliverable and each slice must bind to the paper contract.
+This is the fuller paper-ready form, not the minimum required shape for every non-paper or analysis-lite slice.
 
 ## Good writing-facing todo item
 
@@ -38,6 +39,7 @@ Use this reference when an analysis campaign is supporting a paper-like delivera
 
 Why it is bad:
 
+- no `paper_role`
 - no `section_id`
 - no `item_id`
 - no `claim_links`
