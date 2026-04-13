@@ -6,6 +6,7 @@ import { MarkdownDocument } from '@/components/plugins/MarkdownDocument'
 import { ProjectsAppBar } from '@/components/projects/ProjectsAppBar'
 import { BaselineSettingsPanel } from '@/components/settings/BaselineSettingsPanel'
 import { ConnectorSettingsForm } from '@/components/settings/ConnectorSettingsForm'
+import { DeepXivSettingsPanel } from '@/components/settings/DeepXivSettingsPanel'
 import { connectorCatalog, type ConnectorName } from '@/components/settings/connectorCatalog'
 import { connectorConfigAutoEnabled } from '@/components/settings/connectorSettingsHelpers'
 import { RegistrySettingsForm } from '@/components/settings/RegistrySettingsForm'
@@ -26,10 +27,11 @@ import type {
 } from '@/types'
 
 export type ConfigDocumentName = 'config' | 'runners' | 'connectors' | 'baselines' | 'plugins' | 'mcp_servers'
+export type SettingsSectionName = ConfigDocumentName | 'deepxiv'
 
-const CONFIG_ORDER: ConfigDocumentName[] = ['config', 'runners', 'connectors', 'baselines', 'plugins', 'mcp_servers']
+const SETTINGS_ORDER: SettingsSectionName[] = ['config', 'runners', 'connectors', 'baselines', 'deepxiv', 'plugins', 'mcp_servers']
 
-const CONFIG_META = {
+const SETTINGS_META = {
   config: {
     label: { en: 'Runtime', zh: '运行时' },
     hint: { en: 'Home paths, git, logging, and daemon defaults.', zh: '主目录路径、git、日志与 daemon 默认设置。' },
@@ -52,6 +54,13 @@ const CONFIG_META = {
       zh: '可复用基线条目及其生命周期管理。',
     },
   },
+  deepxiv: {
+    label: { en: 'DeepXiv', zh: 'DeepXiv' },
+    hint: {
+      en: 'Configure the DeepXiv literature route, local token policy, and prompt gating behavior.',
+      zh: '配置 DeepXiv 文献路线、本地 token 策略，以及 prompt 的启用 / 禁用规则。',
+    },
+  },
   plugins: {
     label: { en: 'Extensions', zh: '扩展' },
     hint: { en: 'Optional plugins and local extension discovery.', zh: '可选插件与本地扩展发现。' },
@@ -60,7 +69,7 @@ const CONFIG_META = {
     label: { en: 'MCP', zh: 'MCP' },
     hint: { en: 'External MCP servers and access policy.', zh: '外部 MCP 服务与访问策略。' },
   },
-} satisfies Record<ConfigDocumentName, { label: Record<Locale, string>; hint: Record<Locale, string> }>
+} satisfies Record<SettingsSectionName, { label: Record<Locale, string>; hint: Record<Locale, string> }>
 
 const copy = {
   en: {
@@ -112,12 +121,19 @@ const SYNTHETIC_BASELINE_FILE: ConfigFileEntry = {
   exists: true,
 }
 
-function compareConfig(a: ConfigFileEntry, b: ConfigFileEntry) {
-  return CONFIG_ORDER.indexOf(a.name as ConfigDocumentName) - CONFIG_ORDER.indexOf(b.name as ConfigDocumentName)
+const SYNTHETIC_DEEPXIV_FILE: ConfigFileEntry = {
+  name: 'deepxiv',
+  path: 'config/deepxiv',
+  required: false,
+  exists: true,
 }
 
-function configLabel(name: ConfigDocumentName, locale: Locale) {
-  return CONFIG_META[name].label[locale]
+function compareSettings(a: ConfigFileEntry, b: ConfigFileEntry) {
+  return SETTINGS_ORDER.indexOf(a.name as SettingsSectionName) - SETTINGS_ORDER.indexOf(b.name as SettingsSectionName)
+}
+
+function configLabel(name: SettingsSectionName, locale: Locale) {
+  return SETTINGS_META[name].label[locale]
 }
 
 function connectorBindingTransitionMessage(transition: unknown, questId?: string | null, locale: Locale = 'en') {
@@ -153,8 +169,8 @@ function connectorBindingTransitionMessage(transition: unknown, questId?: string
   return copy.en.connectorBindingSaved
 }
 
-function configHint(name: ConfigDocumentName, locale: Locale) {
-  return CONFIG_META[name].hint[locale]
+function configHint(name: SettingsSectionName, locale: Locale) {
+  return SETTINGS_META[name].hint[locale]
 }
 
 function normalizeHashAnchor(value?: string | null) {
@@ -163,7 +179,7 @@ function normalizeHashAnchor(value?: string | null) {
     .replace(/^#/, '')
 }
 
-function settingsConfigPath(name: ConfigDocumentName | null, connectorName?: ConnectorName | null) {
+function settingsConfigPath(name: SettingsSectionName | null, connectorName?: ConnectorName | null) {
   if (name === 'connectors') {
     return connectorName ? `/settings/connector/${connectorName}` : '/settings/connector'
   }
@@ -219,7 +235,7 @@ export function SettingsPage({
   runtimeAddress,
   locale,
 }: {
-  requestedConfigName?: ConfigDocumentName | null
+  requestedConfigName?: SettingsSectionName | null
   requestedConnectorName?: ConnectorName | null
   onRequestedConfigConsumed?: () => void
   runtimeAddress: string
@@ -232,7 +248,7 @@ export function SettingsPage({
   const [connectors, setConnectors] = useState<ConnectorSnapshot[]>([])
   const [baselineEntries, setBaselineEntries] = useState<BaselineRegistryEntry[]>([])
   const [quests, setQuests] = useState<QuestSummary[]>([])
-  const [selectedName, setSelectedName] = useState<ConfigDocumentName | null>(requestedConfigName || null)
+  const [selectedName, setSelectedName] = useState<SettingsSectionName | null>(requestedConfigName || null)
   const [document, setDocument] = useState<OpenDocumentPayload | null>(null)
   const [structuredDraft, setStructuredDraft] = useState<Record<string, unknown>>({})
   const [loading, setLoading] = useState(true)
@@ -264,12 +280,12 @@ export function SettingsPage({
         if (!mounted) {
           return
         }
-        const sorted = [...filePayload].sort(compareConfig)
-        setFiles([...sorted, SYNTHETIC_BASELINE_FILE].sort(compareConfig))
+        const sorted = [...filePayload].sort(compareSettings)
+        setFiles([...sorted, SYNTHETIC_BASELINE_FILE, SYNTHETIC_DEEPXIV_FILE].sort(compareSettings))
         setConnectors(connectorPayload)
         setBaselineEntries(baselinePayload)
         setQuests(questPayload)
-        const preferred = requestedConfigName || (sorted[0]?.name as ConfigDocumentName | undefined) || null
+        const preferred = requestedConfigName || (sorted[0]?.name as SettingsSectionName | undefined) || null
         if (preferred) {
           setSelectedName(preferred)
         }
@@ -292,7 +308,7 @@ export function SettingsPage({
       setDocumentLoading(false)
       return
     }
-    if (selectedName === 'baselines') {
+    if (selectedName === 'baselines' || selectedName === 'deepxiv') {
       setDocument(null)
       setStructuredDraft({})
       setValidation(null)
@@ -343,6 +359,7 @@ export function SettingsPage({
   const isPageLoading = loading || documentLoading
   const isConnectorDocument = selectedName === 'connectors'
   const isBaselineDocument = selectedName === 'baselines'
+  const isDeepXivDocument = selectedName === 'deepxiv'
   const visibleConnectorNames = useMemo(
     () => new Set(connectors.filter((item) => item.name !== 'local').map((item) => item.name as ConnectorName)),
     [connectors]
@@ -491,7 +508,7 @@ export function SettingsPage({
     )
   }, [isConnectorDocument, location.hash, navigate, selectedConnectorName, visibleConnectorNames])
 
-  const handleSelectName = (name: ConfigDocumentName) => {
+  const handleSelectName = (name: SettingsSectionName) => {
     setSelectedName(name)
     setSaveMessage('')
     navigate(
@@ -509,14 +526,14 @@ export function SettingsPage({
       return files
     }
     return files.filter((item) => {
-      const name = item.name as ConfigDocumentName
+      const name = item.name as SettingsSectionName
       return `${item.name} ${item.path} ${configLabel(name, locale)} ${configHint(name, locale)}`
         .toLowerCase()
         .includes(keyword)
     })
   }, [files, locale, search])
 
-  const selectedMeta = selectedName ? CONFIG_META[selectedName] : null
+  const selectedMeta = selectedName ? SETTINGS_META[selectedName] : null
   const helpMarkdown = translateSettingsHelpMarkdown(
     locale,
     typeof document?.meta?.help_markdown === 'string' ? document.meta.help_markdown : ''
@@ -573,6 +590,9 @@ export function SettingsPage({
     }
     if (selectedName === 'baselines') {
       setBaselineEntries(await client.baselines())
+      return
+    }
+    if (selectedName === 'deepxiv') {
       return
     }
     const next = await client.configDocument(selectedName)
@@ -755,7 +775,7 @@ export function SettingsPage({
 
             <div className="mt-5">
               {filteredFiles.map((file, index) => {
-                const name = file.name as ConfigDocumentName
+                const name = file.name as SettingsSectionName
                 return (
                   <button
                     key={file.name}
@@ -916,7 +936,13 @@ export function SettingsPage({
                   </div>
                 ) : null}
 
-                {document && !isConnectorDocument && !isBaselineDocument ? (
+                {isDeepXivDocument ? (
+                  <div className="pt-6">
+                    <DeepXivSettingsPanel locale={locale} />
+                  </div>
+                ) : null}
+
+                {document && !isConnectorDocument && !isBaselineDocument && !isDeepXivDocument ? (
                   <div className="pt-6">
                     <RegistrySettingsForm
                       documentName={selectedName as Exclude<ConfigDocumentName, 'connectors' | 'baselines'>}

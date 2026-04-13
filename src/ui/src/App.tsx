@@ -3,13 +3,16 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, usePa
 import { AuthProvider } from '@/components/auth/AuthProvider'
 import { DocsPage } from '@/components/docs/DocsPage'
 import { OnboardingOverlay } from '@/components/onboarding/OnboardingOverlay'
-import { SettingsPage, type ConfigDocumentName } from '@/components/settings/SettingsPage'
+import { SettingsPage, type ConfigDocumentName, type SettingsSectionName } from '@/components/settings/SettingsPage'
 import type { ConnectorName } from '@/components/settings/connectorCatalog'
 import { I18nProvider, useI18n } from '@/lib/i18n'
 import { LandingPage } from '@/pages/LandingPage'
 import { ProjectWorkspacePage } from '@/pages/ProjectWorkspacePage'
 
-function normalizeConfigName(value?: string): ConfigDocumentName | null {
+function normalizeSettingsSectionName(value?: string): SettingsSectionName | null {
+  if (value === 'deepxiv') {
+    return 'deepxiv'
+  }
   if (value === 'connector' || value === 'connectors') {
     return 'connectors'
   }
@@ -26,7 +29,7 @@ function normalizeConnectorName(value?: string): ConnectorName | null {
   return null
 }
 
-function settingsRoutePath(name?: ConfigDocumentName | null, connectorName?: ConnectorName | null) {
+function settingsRoutePath(name?: SettingsSectionName | null, connectorName?: ConnectorName | null) {
   if (name === 'connectors') {
     return connectorName ? `/settings/connector/${connectorName}` : '/settings/connector'
   }
@@ -76,8 +79,10 @@ function SettingsRoutePage() {
   const location = useLocation()
   const { configName, connectorName } = useParams()
   const { locale } = useI18n()
-  const state = (location.state as { configName?: ConfigDocumentName | null } | null) ?? null
-  const routeConfigName = normalizeConfigName(configName || (location.pathname.startsWith('/settings/connector') ? 'connector' : undefined))
+  const state = (location.state as { configName?: SettingsSectionName | null } | null) ?? null
+  const routeConfigName = normalizeSettingsSectionName(
+    configName || (location.pathname.startsWith('/settings/connector') ? 'connector' : undefined)
+  )
   const routeConnectorName = normalizeConnectorName(connectorName)
 
   return (
@@ -111,6 +116,7 @@ function AppRoutes() {
         <Route path="/settings/connector" element={<SettingsRoutePage />} />
         <Route path="/settings/connector/:connectorName" element={<SettingsRoutePage />} />
         <Route path="/settings/connectors" element={<SettingsRoutePage />} />
+        <Route path="/settings/deepxiv" element={<SettingsRoutePage />} />
         <Route path="/settings" element={<SettingsRoutePage />} />
         <Route path="/settings/:configName" element={<SettingsRoutePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

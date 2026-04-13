@@ -1542,3 +1542,50 @@ def test_saving_runners_profile_invalidates_cached_codex_bootstrap_state(temp_ho
     assert result["ok"] is True
     assert state["codex_ready"] is False
     assert state["codex_last_result"]["summary"] == "Codex runner configuration changed. A new startup probe is required."
+
+
+def test_default_config_includes_deepxiv_defaults(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    manager = ConfigManager(temp_home)
+    manager.ensure_files()
+
+    config_payload = manager.load_named("config")
+    deepxiv = config_payload["literature"]["deepxiv"]
+
+    assert deepxiv["enabled"] is False
+    assert deepxiv["base_url"] == "https://data.rag.ac.cn"
+    assert deepxiv["token"] is None
+    assert deepxiv["token_env"] == "DEEPXIV_TOKEN"
+    assert deepxiv["default_result_size"] == 10
+    assert deepxiv["preview_characters"] == 1200
+    assert deepxiv["request_timeout_seconds"] == 20
+
+
+def test_config_normalization_sanitizes_deepxiv_settings(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    manager = ConfigManager(temp_home)
+    manager.ensure_files()
+
+    config_payload = manager.load_named("config")
+    config_payload["literature"] = {
+        "deepxiv": {
+            "enabled": "yes",
+            "base_url": " https://data.rag.ac.cn/custom ",
+            "token": "  direct-token  ",
+            "token_env": "   ",
+            "default_result_size": 0,
+            "preview_characters": 10,
+            "request_timeout_seconds": 1,
+        }
+    }
+
+    normalized = manager._normalize_named_payload("config", config_payload)
+    deepxiv = normalized["literature"]["deepxiv"]
+
+    assert deepxiv["enabled"] is True
+    assert deepxiv["base_url"] == "https://data.rag.ac.cn/custom"
+    assert deepxiv["token"] == "direct-token"
+    assert deepxiv["token_env"] is None
+    assert deepxiv["default_result_size"] == 1
+    assert deepxiv["preview_characters"] == 200
+    assert deepxiv["request_timeout_seconds"] == 3

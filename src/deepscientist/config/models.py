@@ -47,6 +47,17 @@ def default_config(home: Path) -> dict:
             "console": True,
             "keep_days": 30,
         },
+        "literature": {
+            "deepxiv": {
+                "enabled": False,
+                "base_url": "https://data.rag.ac.cn",
+                "token": None,
+                "token_env": "DEEPXIV_TOKEN",
+                "default_result_size": 10,
+                "preview_characters": 1200,
+                "request_timeout_seconds": 20,
+            },
+        },
         "git": {
             "auto_checkpoint": True,
             "auto_push": False,

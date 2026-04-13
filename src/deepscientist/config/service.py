@@ -2110,6 +2110,55 @@ Use **Test** when the file exposes runtime dependencies.
             for name in SYSTEM_CONNECTOR_NAMES
         }
         normalized["connectors"] = connectors
+        literature = normalized.get("literature") if isinstance(normalized.get("literature"), dict) else {}
+        raw_literature = payload.get("literature") if isinstance(payload.get("literature"), dict) else {}
+        default_literature = defaults.get("literature") if isinstance(defaults.get("literature"), dict) else {}
+        deepxiv_defaults = default_literature.get("deepxiv") if isinstance(default_literature.get("deepxiv"), dict) else {}
+        deepxiv = literature.get("deepxiv") if isinstance(literature.get("deepxiv"), dict) else {}
+        raw_deepxiv = raw_literature.get("deepxiv") if isinstance(raw_literature.get("deepxiv"), dict) else {}
+        deepxiv["enabled"] = self._coerce_bool(
+            raw_deepxiv.get("enabled", deepxiv.get("enabled", deepxiv_defaults.get("enabled", False))),
+            default=bool(deepxiv_defaults.get("enabled", False)),
+        )
+        deepxiv["base_url"] = str(
+            raw_deepxiv.get("base_url", deepxiv.get("base_url", deepxiv_defaults.get("base_url", "https://data.rag.ac.cn"))) or ""
+        ).strip() or str(deepxiv_defaults.get("base_url") or "https://data.rag.ac.cn")
+        deepxiv["token"] = str(raw_deepxiv.get("token", deepxiv.get("token", "")) or "").strip() or None
+        deepxiv["token_env"] = str(
+            raw_deepxiv.get("token_env", deepxiv.get("token_env", deepxiv_defaults.get("token_env", "DEEPXIV_TOKEN"))) or ""
+        ).strip() or None
+        try:
+            default_result_size = raw_deepxiv.get(
+                "default_result_size",
+                deepxiv.get("default_result_size", deepxiv_defaults.get("default_result_size", 10)),
+            )
+            if default_result_size is None or default_result_size == "":
+                default_result_size = deepxiv_defaults.get("default_result_size", 10)
+            deepxiv["default_result_size"] = max(1, int(default_result_size))
+        except (TypeError, ValueError):
+            deepxiv["default_result_size"] = int(deepxiv_defaults.get("default_result_size", 10) or 10)
+        try:
+            preview_characters = raw_deepxiv.get(
+                "preview_characters",
+                deepxiv.get("preview_characters", deepxiv_defaults.get("preview_characters", 1200)),
+            )
+            if preview_characters is None or preview_characters == "":
+                preview_characters = deepxiv_defaults.get("preview_characters", 1200)
+            deepxiv["preview_characters"] = max(200, int(preview_characters))
+        except (TypeError, ValueError):
+            deepxiv["preview_characters"] = int(deepxiv_defaults.get("preview_characters", 1200) or 1200)
+        try:
+            request_timeout_seconds = raw_deepxiv.get(
+                "request_timeout_seconds",
+                deepxiv.get("request_timeout_seconds", deepxiv_defaults.get("request_timeout_seconds", 20)),
+            )
+            if request_timeout_seconds is None or request_timeout_seconds == "":
+                request_timeout_seconds = deepxiv_defaults.get("request_timeout_seconds", 20)
+            deepxiv["request_timeout_seconds"] = max(3, int(request_timeout_seconds))
+        except (TypeError, ValueError):
+            deepxiv["request_timeout_seconds"] = int(deepxiv_defaults.get("request_timeout_seconds", 20) or 20)
+        literature["deepxiv"] = deepxiv
+        normalized["literature"] = literature
         return normalized
 
     @staticmethod

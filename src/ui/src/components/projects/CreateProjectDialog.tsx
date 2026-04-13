@@ -6,6 +6,7 @@ import { ConnectorTargetRadioGroup, type ConnectorTargetRadioItem } from '@/comp
 import { OverlayDialog } from '@/components/home/OverlayDialog'
 import { LAUNCH_DIALOG_SHELL_CLASS } from '@/components/projects/LaunchModeVisuals'
 import { connectorCatalog } from '@/components/settings/connectorCatalog'
+import { DeepXivSetupDialog } from '@/components/settings/DeepXivSetupDialog'
 import { AnimatedCheckbox } from '@/components/ui/animated-checkbox'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -1246,6 +1247,21 @@ function formatBaselineStatus(value: string | null | undefined, locale: 'en' | '
   return normalized.replace(/_/g, ' ')
 }
 
+const deepxivCopy = {
+  en: {
+    title: 'DeepXiv literature',
+    body: 'If configured, `idea` and `scout` can use DeepXiv-first paper discovery and paper triage. Without a token, the prompt should stay on the legacy route.',
+    openSetup: 'Open setup',
+    openSettings: 'Settings',
+  },
+  zh: {
+    title: 'DeepXiv 文献能力',
+    body: '如果已配置 token，`idea` 和 `scout` 可以优先走 DeepXiv 的论文发现与速读路径；如果没有 token，系统提示词应继续使用旧路线。',
+    openSetup: '打开配置引导',
+    openSettings: '前往设置',
+  },
+} as const
+
 export function CreateProjectDialog({
   open,
   loading,
@@ -1274,6 +1290,7 @@ export function CreateProjectDialog({
   const { locale } = useI18n()
   const onboardingStatus = useOnboardingStore((state) => state.status)
   const t = normalizedCopy[locale]
+  const deepxivT = deepxivCopy[locale]
   const backLabel = locale === 'zh' ? '返回' : 'Back'
   const [showAdvanced, setShowAdvanced] = useState(true)
   const [form, setForm] = useState<StartResearchTemplate>(defaultStartResearchTemplate(locale))
@@ -1290,6 +1307,7 @@ export function CreateProjectDialog({
   const [connectors, setConnectors] = useState<ConnectorSnapshot[]>([])
   const [connectorsLoading, setConnectorsLoading] = useState(false)
   const [connectorsError, setConnectorsError] = useState<string | null>(null)
+  const [deepxivSetupOpen, setDeepxivSetupOpen] = useState(false)
   const [selectedConnectorBindings, setSelectedConnectorBindings] = useState<Record<string, string | null>>({})
   const referenceTemplates = useMemo(() => listReferenceStartResearchTemplates(), [])
 
@@ -2002,6 +2020,24 @@ export function CreateProjectDialog({
                     disabled={manualOverride}
                   />
                 </InlineField>
+                <div className="rounded-[18px] border border-[rgba(45,42,38,0.08)] bg-[linear-gradient(145deg,rgba(253,247,241,0.94),rgba(239,229,220,0.84)_42%,rgba(226,235,239,0.82))] px-4 py-4 shadow-[0_16px_44px_-34px_rgba(44,39,34,0.24)]">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-[rgba(38,36,33,0.95)] dark:text-[rgba(38,36,33,0.95)]">{deepxivT.title}</div>
+                      <div className="mt-2 text-[11px] leading-6 text-[rgba(75,73,69,0.78)] dark:text-[rgba(75,73,69,0.78)]">
+                        {deepxivT.body}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <Button type="button" variant="secondary" className="rounded-full" onClick={() => setDeepxivSetupOpen(true)}>
+                        {deepxivT.openSetup}
+                      </Button>
+                      <Button type="button" variant="outline" className="rounded-full" onClick={() => navigate('/settings/deepxiv')}>
+                        {deepxivT.openSettings}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
                 {showAdvanced ? (
                   <InlineField label={t.languageLabel} help={t.languageHelp}>
                     <select
@@ -2437,6 +2473,7 @@ export function CreateProjectDialog({
         </div>
         </div>
       </OverlayDialog>
+      <DeepXivSetupDialog open={deepxivSetupOpen} onClose={() => setDeepxivSetupOpen(false)} locale={locale} />
     </>
   )
 }
